@@ -1,0 +1,4 @@
+# ignore lucas local data files
+lucas/*.csv*
+lucas/*.db*
+lucas/*.json
