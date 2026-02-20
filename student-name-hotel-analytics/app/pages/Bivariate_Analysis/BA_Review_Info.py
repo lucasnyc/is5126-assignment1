@@ -1,80 +1,48 @@
+from ast import While
 import streamlit as st
 import pandas as pd
 import numpy as np  
 import matplotlib.pyplot as plt
 import seaborn as sns
+import sqlite3
+from pathlib import Path
 
-st.title("Scatter Plots of features vs Overall Review Status")
+if "DB_PATH" in st.session_state:
+    DB_PATH = st.session_state["DB_PATH"]
+else:
+    PROJECT_ROOT = Path(__file__).resolve().parents[4]
+    DB_PATH = PROJECT_ROOT / "data" / "reviews_sqlite.db"
 
-df_variables = st.session_state["df_variables"]
-df_origin = st.session_state["df_origin"]
-overall_review_statuses = df_origin['overall'].unique()
+conn = sqlite3.connect(DB_PATH)
+st.title("Review Info Based Bivariate Analysis")
 
-tab1, tab2, tab3, tab4, tab5, tab6= st.tabs(['service','cleanliness','value', 'location_rating','sleep_quality','rooms'])
+review_sample = pd.read_sql("""
+SELECT overall, service, cleanliness, value, location_rating, sleep_quality, rooms,
+       title, text, review_date, via_mobile
+FROM reviews
+WHERE text IS NOT NULL AND overall BETWEEN 1 AND 5 AND review_date IS NOT NULL
+ORDER BY RANDOM()
+LIMIT 50000;
+""", conn)
+
+review_sample["len_words"] = review_sample["text"].str.split().str.len()
+review_sample["review_date"] = pd.to_datetime(review_sample["review_date"])
+
+tab1, tab2 = st.tabs([ 'Review length distribution', 'Review length vs overall rating'])
 with tab1:
-    st.markdown(f"**Definition:** {df_variables[df_variables['name']=='service']['description']}")
+    st.markdown("Review lengths exhibit a highly right-skewed distribution, with most reviews being relatively short and a rapidly diminishing number of very long reviews extending beyond 1,000 words. The long tail suggests that while the majority of users provide brief feedback, a small subset of reviewers contribute detailed, narrative-style reviews, which may contain richer qualitative insights but should be treated carefully to avoid over-weighting verbose outliers in text analysis.")
     plt.figure(figsize=(10, 6))
-    sns.scatterplot(data=df_origin, x='service', y='overall', hue='overall', palette='Set2')
-    sns.regplot(data=df_origin, x='service', y='overall', scatter=False, color='red')
-    plt.xlabel('Service')
-    plt.ylabel("Overall Review Status")
-    plt.title(f'Service vs Overall Review Status')
-    plt.xticks(rotation=45)
+    plt.hist(review_sample["len_words"], bins=60)
+    plt.yscale("log")
+    plt.title("Review length distribution (words, log y)")
     plt.tight_layout()
     st.pyplot(plt)
-
 with tab2:
-    st.markdown(f"**Definition:** {df_variables[df_variables['name']=='cleanliness']['description']}")
+    st.markdown("The relationship between review length and overall rating shows no strong linear correlation, with both short and long reviews appearing across all rating levels. However, lower ratings tend to exhibit greater variability in review length, including a higher concentration of very long reviews, suggesting that dissatisfied guests are more likely to provide detailed explanations. In contrast, higher ratings are more frequently associated with shorter reviews, indicating that positive experiences are often communicated more succinctly.")
     plt.figure(figsize=(10, 6))
-    sns.scatterplot(data=df_origin, x='cleanliness', y='overall', hue='overall', palette='Set2')
-    sns.regplot(data=df_origin, x='cleanliness', y='overall', scatter=False, color='red')
-    plt.xlabel('Cleanliness')
-    plt.ylabel("Overall Review Status")
-    plt.title(f'Cleanliness vs Overall Review Status')
-    plt.xticks(rotation=45)
-    plt.tight_layout()
-    st.pyplot(plt)
-with tab3:
-    st.markdown(f"**Definition:** {df_variables[df_variables['name']=='value']['description']}")
-    plt.figure(figsize=(10, 6))
-    sns.scatterplot(data=df_origin, x='value', y='overall', hue='overall', palette='Set2')
-    sns.regplot(data=df_origin, x='value', y='overall', scatter=False, color='red')
-    plt.xlabel('Value')
-    plt.ylabel("Overall Review Status")
-    plt.title(f'Value vs Overall Review Status')
-    plt.xticks(rotation=45)
-    plt.tight_layout()
-    st.pyplot(plt)
-with tab4:
-    st.markdown(f"**Definition:** {df_variables[df_variables['name']=='location_rating']['description']}")
-    plt.figure(figsize=(10, 6))
-    sns.scatterplot(data=df_origin, x='location_rating', y='overall', hue='overall', palette='Set2')
-    sns.regplot(data=df_origin, x='location_rating', y='overall', scatter=False, color='red')
-    plt.xlabel('Location Rating')
-    plt.ylabel("Overall Review Status")
-    plt.title(f'Location Rating vs Overall Review Status')
-    plt.xticks(rotation=45)
-    plt.tight_layout()
-    st.pyplot(plt)
-with tab5:
-    st.markdown(f"**Definition:** {df_variables[df_variables['name']=='sleep_quality']['description']}")
-    plt.figure(figsize=(10, 6))
-    sns.scatterplot(data=df_origin, x='sleep_quality', y='overall', hue='overall', palette='Set2')
-    sns.regplot(data=df_origin, x='sleep_quality', y='overall', scatter=False, color='red')
-    plt.xlabel('Sleep Quality')
-    plt.ylabel("Overall Review Status")
-    plt.title(f'Sleep Quality vs Overall Review Status')
-    plt.xticks(rotation=45)
-    plt.tight_layout()
-    st.pyplot(plt)
-with tab6:
-    st.markdown(f"**Definition:** {df_variables[df_variables['name']=='rooms']['description']}")
-    plt.figure(figsize=(10, 6))
-    sns.scatterplot(data=df_origin, x='rooms', y='overall', hue='overall', palette='Set2')
-    sns.regplot(data=df_origin, x='rooms', y='overall', scatter=False, color='red')
-    plt.xlabel('Rooms')
-    plt.ylabel("Overall Review Status")
-    plt.title(f'Rooms vs Overall Review Status')
-    plt.xticks(rotation=45)
+    plt.scatter(review_sample["overall"], review_sample["len_words"], s=5)
+    plt.title("Review length vs overall rating (50k sample)")
+    plt.xlabel("overall")
+    plt.ylabel("len_words")
     plt.tight_layout()
     st.pyplot(plt)

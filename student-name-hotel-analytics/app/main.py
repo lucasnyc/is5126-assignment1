@@ -4,14 +4,23 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
+import sqlite3
 
 # Get project root (two levels up from this file)
 ROOT = Path(__file__).resolve().parent.parent
 PROJECT_ROOT = ROOT 
 st.set_page_config(layout="wide")
-df_variables = pd.read_csv(PROJECT_ROOT / "data" / "consolidated_data_variables_info.csv")
-df_origin = pd.read_csv(PROJECT_ROOT / "data" / "consolidated_data.csv")
 
+DATA_DIR = PROJECT_ROOT / "data"
+JSON_FILE = DATA_DIR / "review.json"        
+DB_PATH = DATA_DIR / "reviews_sqlite.db"
+SQL_SCHEMA = DATA_DIR / "data_schema.sql"
+SQL_INDEXING = DATA_DIR / "data_indexing.sql"
+
+df_variables = pd.read_csv(DATA_DIR / "consolidated_data_variables_info.csv")
+df_origin = pd.read_csv(DATA_DIR / "consolidated_data.csv")
+
+st.session_state["DB_PATH"] = str(DB_PATH)
 st.session_state["df_variables"] = df_variables
 st.session_state["df_origin"] = df_origin
 show_pages = {
@@ -28,8 +37,10 @@ show_pages = {
         st.Page(PROJECT_ROOT / "app" / "pages" / "Univariate_Analysis" / "UA_Review_Info.py",title="Review Info Histogram",icon="📊"),
     ],
     "Bivariate Analysis":[
-        st.Page(PROJECT_ROOT / "app" / "pages" / "Bivariate_Analysis" / "BA_Author_Info.py",title="Author Info Bivariate Analysis",icon="📉"),
-        st.Page(PROJECT_ROOT / "app" / "pages" / "Bivariate_Analysis" / "BA_Review_Info.py",title="Review Info Bivariate Analysis",icon="📉"),
+        st.Page(PROJECT_ROOT / "app" / "pages" / "Bivariate_Analysis" / "BA_Author_Behavior.py",title="Author Behavior Bivariate Analysis",icon="📉"),
+        st.Page(PROJECT_ROOT / "app" / "pages" / "Bivariate_Analysis" / "BA_Hotel_Info.py",title="Hotel Info Based Bivariate Analysis",icon="📉"),
+        st.Page(PROJECT_ROOT / "app" / "pages" / "Bivariate_Analysis" / "BA_Review_Info.py",title="Review Info Based Bivariate Analysis",icon="📉"),
+        st.Page(PROJECT_ROOT / "app" / "pages" / "Bivariate_Analysis" / "BA_Time_Series_Analysis.py",title="Time Series Analysis",icon="📉"),
     ],
     "Multivariate Analysis":[
         st.Page(PROJECT_ROOT / "app" / "pages" / "Multivariate_Analysis" /"MA_Correlation_Heatmap.py",title="Correlation Heatmap",icon="🔢"),
