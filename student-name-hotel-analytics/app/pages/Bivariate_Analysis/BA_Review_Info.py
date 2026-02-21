@@ -11,7 +11,7 @@ if "DB_PATH" in st.session_state:
     DB_PATH = st.session_state["DB_PATH"]
 else:
     PROJECT_ROOT = Path(__file__).resolve().parents[4]
-    DB_PATH = PROJECT_ROOT / "data" / "reviews_sqlite.db"
+    DB_PATH = PROJECT_ROOT / "data" / "reviews_sample.db"
 
 conn = sqlite3.connect(DB_PATH)
 st.title("Review Info Based Bivariate Analysis")
