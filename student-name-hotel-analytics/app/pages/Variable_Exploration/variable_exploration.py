@@ -17,8 +17,14 @@ df_origin = st.session_state["df_origin"]
 
 
 pd.set_option('display.max_colwidth', None)
-df_variables['Unique Values'] = [df_origin[col].nunique() for col in df_origin.columns]
-df_variables['Missing Values Qty'] = [df_origin[col].isnull().sum() for col in df_origin.columns]
+
+# Compute statistics aligned with df_variables rows (by variable name)
+df_variables['Unique Values'] = df_variables['name'].apply(
+    lambda col: df_origin[col].nunique() if col in df_origin.columns else np.nan
+)
+df_variables['Missing Values Qty'] = df_variables['name'].apply(
+    lambda col: df_origin[col].isnull().sum() if col in df_origin.columns else np.nan
+)
 
 st.dataframe(
     df_variables[['name', 'type', 'role', 'Unique Values', 'Missing Values Qty', 'description']],

@@ -1,0 +1,24 @@
+name,type,role,description
+title,string,feature,Title of the review
+text,string,feature,Text content of the review
+date_stayed,datetime,feature,Date when the author stayed at the hotel
+offering_id,Int64,,ID of the hotel
+num_helpful_votes,Int64,feature,Number of helpful votes this review received
+date,datetime,feature,Original review date string from the source data
+id,Int64,,Unique identifier of the review
+via_mobile,boolean,feature,Whether the review was posted via a mobile device
+review_date,datetime,feature,Date when the author posted the review (datetime)
+author_id,string,,Unique identifier of the author
+author_name,string,,Username of the author
+author_location,string,feature,Self-reported location of the author
+author_num_reviews,Int64,feature,Total number of reviews written by the author
+author_num_cities,Int64,feature,Number of different cities the author has reviewed
+author_num_helpful_votes,Int64,feature,Total helpful votes received by the author
+author_num_type_reviews,Int64,feature,Number of reviews of this property type by the author
+overall,Int64,target,Overall rating given in the review
+service,Int64,feature,Service rating given in the review
+cleanliness,Int64,feature,Cleanliness rating given in the review
+value,Int64,feature,Value rating given in the review
+location_rating,Int64,feature,Location rating given in the review
+sleep_quality,Int64,feature,Sleep quality rating given in the review
+rooms,Int64,feature,Rooms rating given in the review
