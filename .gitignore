@@ -2,3 +2,4 @@
 lucas/*.csv*
 lucas/*.db*
 lucas/*.json
+.vscode/*
