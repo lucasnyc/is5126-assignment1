@@ -1,0 +1,52 @@
+Code-Level Profiling (cProfile)
+===============================
+
+1) Pandas aggregation on filtered reviews
+-----------------------------------------
+
+Function profiled:
+- pandas_aggregation(): groupby offering_id and compute mean for service, cleanliness, value, location_rating, sleep_quality, rooms on filtered_reviews.
+
+cProfile output:
+----------------
+2243 function calls (2208 primitive calls) in 0.017 seconds
+
+Ordered by: cumulative time
+List reduced from 426 to 10 due to restriction <10>
+
+ncalls  tottime  percall  cumtime  percall  filename:lineno(function)
+3/2     0.000    0.000    0.012   0.006    IPython/core/interactiveshell.py:3665(run_code)
+3/2     0.000    0.000    0.012   0.006    {built-in method builtins.exec}
+1       0.000    0.000    0.011   0.011    <notebook cell>:1(pandas_aggregation)
+1       0.000    0.000    0.011   0.011    pandas/core/groupby/groupby.py:2192(mean)
+1       0.000    0.000    0.011   0.011    pandas/core/groupby/groupby.py:1764(_cython_agg_general)
+1       0.000    0.000    0.011   0.011    pandas/core/internals/managers.py:1607(grouped_reduce)
+1       0.000    0.000    0.010   0.010    pandas/core/internals/blocks.py:341(apply)
+1       0.000    0.000    0.010   0.010    pandas/core/groupby/groupby.py:1781(array_func)
+1       0.000    0.000    0.010   0.010    pandas/core/groupby/ops.py:940(cython_operation)
+...
+
+2) KMeans clustering on hotel feature matrix
+--------------------------------------------
+
+Function profiled:
+- run_kmeans(): fit KMeans with 4 clusters (n_init=10, random_state=42) on standardized hotel-level features.
+
+cProfile output:
+----------------
+53699 function calls (53594 primitive calls) in 0.218 seconds
+
+Ordered by: cumulative time
+List reduced from 515 to 10 due to restriction <10>
+
+ncalls  tottime  percall  cumtime  percall  filename:lineno(function)
+3/2     0.000    0.000    0.217   0.108    IPython/core/interactiveshell.py:3665(run_code)
+3/2     0.000    0.000    0.217   0.108    {built-in method builtins.exec}
+1       0.000    0.000    0.217   0.217    <notebook cell>:1(run_kmeans)
+1       0.000    0.000    0.216   0.216    sklearn/base.py:1319(wrapper)
+3       0.064    0.021    0.178   0.059    asyncio/base_events.py:1970(_run_once)
+10      0.000    0.000    0.052   0.005    sklearn/utils/parallel.py:206(wrapper)
+10      0.043    0.004    0.051   0.005    sklearn/cluster/_kmeans.py:629(_kmeans_single_lloyd)
+1       0.000    0.000    0.045   0.045    joblib/parallel.py:631(cpu_count)
+1       0.000    0.000    0.045   0.045    joblib/externals/loky/backend/context.py:78(cpu_count)
+...

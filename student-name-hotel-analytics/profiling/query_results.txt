@@ -1,0 +1,100 @@
+Query Performance Profiling
+===========================
+
+Dataset scale
+-------------
+REVIEW TABLE SHAPE: (754798, 16)
+REVIEW (FILTERED) TABLE SHAPE: (343758, 16)
+HOTEL TABLE SHAPE: (3888, 1)
+AUTHOR TABLE SHAPE: (524023, 7)
+
+Memory Usage (Full Review Dataset)
+----------------------------------
+Index: 343758 entries, 0 to 754789
+Data columns (total 16 columns):
+ #   Column                   Non-Null Count  Dtype
+---  ------                   --------------  -----
+ 0   id                       343758 non-null int64
+ 1   author_id                343758 non-null str
+ 2   offering_id              343758 non-null int64
+ 3   overall                  343758 non-null float64
+ 4   service                  343758 non-null float64
+ 5   cleanliness              343758 non-null float64
+ 6   value                    343758 non-null float64
+ 7   location_rating          343758 non-null float64
+ 8   sleep_quality            343758 non-null float64
+ 9   rooms                    343758 non-null float64
+10   title                    343758 non-null str
+11   text                     343758 non-null str
+12   review_date              343758 non-null str
+13   date_stayed              343758 non-null str
+14   via_mobile               343758 non-null bool
+15   author_num_helpful_votes 343758 non-null float64
+dtypes: bool(1), float64(8), int64(2), str(5)
+memory usage: 448.3 MB
+
+High-helpfulness filter (80th percentile)
+-----------------------------------------
+80th Percentile Threshold: 22.0
+Rows Before: 754798
+Rows After: 71102
+Filtering Time: 0.0253 sec
+
+In-memory aggregation and join timings
+--------------------------------------
+Aggregation Time (Full Data):    0.0189 sec
+Join Time (Full Data):           0.0324 sec
+
+Aggregation Time (Filtered Data): 0.0026 sec
+Join Time (Filtered Data):        0.0056 sec
+
+Performance summary
+-------------------
+Operation    Full Data Time (sec)   Filtered Data Time (sec)
+Aggregation  0.0189                 0.0026
+Join         0.0324                 0.0056
+
+SQLite aggregation query
+------------------------
+SQL:
+SELECT offering_id,
+       AVG(service)     AS avg_service,
+       AVG(cleanliness) AS avg_cleanliness,
+       AVG(value)       AS avg_value
+FROM reviews
+GROUP BY offering_id;
+
+Aggregation Time (Before Index): 0.0889 seconds
+
+EXPLAIN QUERY PLAN (Before Index):
+id  parent  notused  detail
+0   6       0        SCAN reviews
+1   8       0        USE TEMP B-TREE FOR GROUP BY
+
+Created index:
+CREATE INDEX IF NOT EXISTS idx_reviews_offering
+ON reviews(offering_id);
+
+Aggregation Time (After Index): 0.1977 seconds
+
+EXPLAIN QUERY PLAN (After Index):
+id  parent  notused  detail
+0   7       0        SCAN reviews USING INDEX idx_reviews_offering
+
+SQLite join query
+-----------------
+SQL:
+SELECT r.offering_id,
+       r.author_num_helpful_votes,
+       a.offering_id
+FROM reviews r
+JOIN hotels a
+ON r.offering_id = a.offering_id;
+
+Join Time (Before Index): 0.1663 seconds
+
+Created index:
+CREATE INDEX IF NOT EXISTS idx_hotels_offering
+ON hotels(offering_id);
+
+Join Time (After Index): 0.1626 seconds
