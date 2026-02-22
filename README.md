@@ -1,1 +1,1 @@
-# is5126-assignment1
+## Follow README in student-name-hotel-analytics
