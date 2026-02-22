@@ -57,7 +57,7 @@ def load_pipeline():
 hotel_id_input = st.text_input(
     "Offering ID (Hotel ID)",
     value="",
-    placeholder="e.g. 93466",
+    placeholder="e.g. 93618",
     key="hotel_id_main",
 )
 

@@ -71,7 +71,7 @@ def load_hotel_stats(_conn):
         FROM reviews
         WHERE overall BETWEEN 1 AND 5
         GROUP BY offering_id
-        HAVING COUNT(*) >= 50
+        HAVING COUNT(*) >= 5
         """,
         _conn,
     )
@@ -145,7 +145,7 @@ with tab1:
         hotel_id_t1 = st.text_input(
             "Offering ID",
             value="",
-            placeholder="e.g. 93466  (leave blank for all)",
+            placeholder="e.g. 93618  (leave blank for all)",
             key="hotel_id_t1",
         )
         if hotel_id_t1.strip():
@@ -299,7 +299,7 @@ with tab3:
         hotel_id_t3 = st.text_input(
             "Offering ID",
             value="",
-            placeholder="e.g. 93466  (leave blank for all)",
+            placeholder="e.g. 93618  (leave blank for all)",
             key="hotel_id_t3",
         )
         if hotel_id_t3.strip():
@@ -500,7 +500,7 @@ with tab2:
 
     with filter_col1:
         st.markdown("**Filter: My Offering ID (Hotel ID)**")
-        my_hotel_id_input = st.text_input("Offering ID", value="", placeholder="e.g. 93466  (leave blank for all)", key="my_hotel_id")
+        my_hotel_id_input = st.text_input("Offering ID", value="", placeholder="e.g. 93618  (leave blank for all)", key="my_hotel_id")
         enable_my_hotel = False
         my_hotel_ratings = {}
         my_overall = None
@@ -510,7 +510,7 @@ with tab2:
                 my_hotel_id = int(my_hotel_id_input.strip())
                 my_row = hotel_stats[hotel_stats["offering_id"] == my_hotel_id]
                 if my_row.empty:
-                    st.warning(f"Offering ID {my_hotel_id} not found (needs >= 50 reviews).")
+                    st.warning(f"Offering ID {my_hotel_id} not found (needs >= 5 reviews).")
                 else:
                     enable_my_hotel = True
                     r = my_row.iloc[0]
@@ -701,7 +701,7 @@ with tab4:
             hotel_id_t4 = st.text_input(
                 "Offering ID",
                 value="",
-                placeholder="e.g. 93466  (leave blank for all)",
+                placeholder="e.g. 93618  (leave blank for all)",
                 key="hotel_id_t4",
             )
             hid_t4 = None

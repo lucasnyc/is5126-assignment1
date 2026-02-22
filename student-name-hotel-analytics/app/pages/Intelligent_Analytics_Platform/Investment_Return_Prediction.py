@@ -114,7 +114,7 @@ def draw_filters(tab_key: str):
         hotel_id_str = st.text_input(
             "Offering ID",
             value="",
-            placeholder="e.g. 93466  (leave blank for all)",
+            placeholder="e.g. 93618  (leave blank for all)",
             key=f"hotel_id_{tab_key}",
         )
         if hotel_id_str.strip():
