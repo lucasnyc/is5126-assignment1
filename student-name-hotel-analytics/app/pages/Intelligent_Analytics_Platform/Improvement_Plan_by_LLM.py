@@ -170,7 +170,7 @@ for i, row in weak_reviews.iterrows():
 
 # -- Build prompt -------------------------------------------------------------
 # Keep snippets short to stay within model token limits (esp. flan-t5-base)
-MAX_SNIPPET_CHARS = 400
+MAX_SNIPPET_CHARS = 300
 
 review_snippets = []
 for i, row in weak_reviews.iterrows():
@@ -184,15 +184,16 @@ for i, row in weak_reviews.iterrows():
 reviews_block = "\n".join(review_snippets)
 
 prompt = (
-    f"You are a hospitality consultant. "
-    f"Below are {len(weak_reviews)} guest reviews for a hotel with low scores for '{worst_label}':\n\n"
-    f"{reviews_block}\n\n"
-    f"Write an improvement plan with four sections: "
+    f"Task: Write a hotel improvement plan with exactly four sections: "
     f"1. Root Cause Summary, "
     f"2. Quick Wins (within 1 month), "
     f"3. Medium-Term Improvements (1-6 months), "
     f"4. Success Metrics (KPIs). "
-    f"Be concise and base every point on the reviews above."
+    f"Be concise and base every point on the guest reviews below.\n\n"
+    f"Context: You are a hospitality consultant reviewing {len(weak_reviews)} "
+    f"low-scoring guest reviews for the '{worst_label}' aspect of Hotel {hotel_id}.\n\n"
+    f"{reviews_block}\n\n"
+    f"Now write the four-section improvement plan:"
 )
 
 # -- Generate improvement plan ------------------------------------------------
@@ -207,41 +208,80 @@ if generate_btn:
     with st.spinner(f"Running {hf_model} locally …"):
         try:
             import torch
-            # Truncate prompt to avoid exceeding model's max input length
-            inputs = tokenizer(
-                prompt,
-                return_tensors="pt",
-                truncation=True,
-                max_length=512,
-            )
 
-            with torch.no_grad():
-                if task == "text2text-generation":
+            if task == "text2text-generation":
+                # seq2seq models (flan-t5, bart) — plain prompt, 512-token limit
+                inputs = tokenizer(
+                    prompt,
+                    return_tensors="pt",
+                    truncation=True,
+                    max_length=512,
+                )
+                with torch.no_grad():
                     output_ids = model.generate(
                         **inputs,
                         max_new_tokens=max_new_tokens,
                     )
-                    plan_text = tokenizer.decode(
-                        output_ids[0], skip_special_tokens=True
-                    ).strip()
-                else:
-                    # Causal models (e.g. TinyLlama) — decode only the new tokens
+                plan_text = tokenizer.decode(
+                    output_ids[0], skip_special_tokens=True
+                ).strip()
+                prompt_used = prompt
+
+            else:
+                # Causal/chat models (TinyLlama etc.) — apply the chat template
+                # so the model receives proper <|system|>/<|user|>/<|assistant|> tokens
+                system_msg = (
+                    "You are a hospitality consultant. "
+                    "Your task is to write a structured hotel improvement plan. "
+                    "Do NOT summarise the reviews or answer questions. "
+                    "Output ONLY the four-section plan."
+                )
+                user_msg = (
+                    f"Here are {len(weak_reviews)} low-scoring guest reviews for the "
+                    f"'{worst_label}' aspect of Hotel {hotel_id}:\n\n"
+                    f"{reviews_block}\n\n"
+                    f"Write an improvement plan with exactly these four sections:\n"
+                    f"1. Root Cause Summary\n"
+                    f"2. Quick Wins (within 1 month)\n"
+                    f"3. Medium-Term Improvements (1-6 months)\n"
+                    f"4. Success Metrics (KPIs)\n\n"
+                    f"Be concise. Base every point on the reviews above."
+                )
+                messages = [
+                    {"role": "system",  "content": system_msg},
+                    {"role": "user",    "content": user_msg},
+                ]
+                formatted = tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+                inputs = tokenizer(
+                    formatted,
+                    return_tensors="pt",
+                    truncation=True,
+                    max_length=2048,
+                )
+                with torch.no_grad():
                     output_ids = model.generate(
                         **inputs,
                         max_new_tokens=max_new_tokens,
                         do_sample=True,
                         temperature=0.7,
+                        repetition_penalty=1.1,
                         pad_token_id=tokenizer.eos_token_id,
                     )
-                    new_tokens = output_ids[0][inputs["input_ids"].shape[1]:]
-                    plan_text = tokenizer.decode(
-                        new_tokens, skip_special_tokens=True
-                    ).strip()
+                new_tokens = output_ids[0][inputs["input_ids"].shape[1]:]
+                plan_text = tokenizer.decode(
+                    new_tokens, skip_special_tokens=True
+                ).strip()
+                prompt_used = formatted
 
             if plan_text:
                 st.session_state["improvement_plan"] = plan_text
                 st.session_state["plan_hotel"]       = hotel_id
                 st.session_state["plan_aspect"]      = worst_label
+                st.session_state["plan_prompt"]      = prompt_used
             else:
                 st.error("The model returned an empty response. Try a larger model or increase Max new tokens.")
 
@@ -274,6 +314,6 @@ if (
         )
 
     with st.expander("View prompt sent to model"):
-        st.code(prompt, language="text")
+        st.code(st.session_state.get("plan_prompt", prompt), language="text")
 else:
     st.info("Click **Generate Improvement Plan** to run the local model.")
