@@ -1,0 +1,13 @@
+# Core data & visualisation
+streamlit==1.49.1
+pandas==2.3.2
+numpy==2.3.2
+matplotlib==3.10.6
+seaborn==0.13.2
+
+# Machine learning (cluster classification, text analytics)
+scikit-learn==1.8.0
+
+# LLM inference (Improvement Plan page)
+transformers==5.2.0
+torch==2.10.0
