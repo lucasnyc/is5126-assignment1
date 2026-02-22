@@ -15,7 +15,7 @@ else:
 conn = sqlite3.connect(str(DB_PATH))
 
 # -- Page header --------------------------------------------------------------
-st.title("Guest Experience Dashboard")
+st.title("My Hotel Guest Experience Dashboard")
 st.caption(
     "Performance snapshot per hotel, aspect activity trends over time, "
     "and holistic text insights from guest reviews."
@@ -110,7 +110,7 @@ def draw_filters(tab_key: str):
     """Render the two shared filters; return (hotel_id_str, start_label, end_label)."""
     fc1, fc2 = st.columns([1, 2])
     with fc1:
-        st.markdown("**Filter: Offering ID (Hotel)**")
+        st.markdown("**Filter: My Offering ID (Hotel ID)**")
         hotel_id_str = st.text_input(
             "Offering ID",
             value="",
@@ -169,7 +169,7 @@ fdf_base   = filter_df(df,      hotel_id_global, start_global, end_global)
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "Overall Rating Distribution",
     "Top and Bottom Reviews",
-    "Contributor Activity Over Time",
+    "Aspect Contribution Over Time",
     "Textual Feedback Analytics",
     "Top Reviewer Details",
 ])
@@ -225,10 +225,10 @@ with tab2:
                 st.markdown("---")
 
 # =============================================================================
-# Tab 3 -- Contributor Activity Over Time
+# Tab 3 -- Aspect Contribution Over Time
 # =============================================================================
 with tab3:
-    st.subheader("Contributor Activity Over Time")
+    st.subheader("Aspect Contribution Over Time")
     st.markdown(
         "Track how aspect scores -- Service, Cleanliness, Value, Location, "
         "Sleep Quality, and Rooms -- evolve over time for a specific hotel or "

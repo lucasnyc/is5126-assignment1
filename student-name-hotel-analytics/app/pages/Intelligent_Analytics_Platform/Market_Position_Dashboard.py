@@ -3,9 +3,10 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import sqlite3
+import pickle
 from pathlib import Path
 
-# â”€â”€ DB connection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ───────────────────────── DB connection ─────────────────────────
 if "DB_PATH" in st.session_state:
     DB_PATH = st.session_state["DB_PATH"]
 else:
@@ -14,13 +15,13 @@ else:
 
 conn = sqlite3.connect(DB_PATH)
 
-# â”€â”€ Page header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-st.title("Market Position Dashboard")
+# ───────────────────────── Page header ─────────────────────────
+st.title("My Market Position Dashboard")
 st.caption(
     "Understand what affects hotel ratings - and where to invest to improve guest experience."
 )
 
-# â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ───────────────────────── Constants ─────────────────────────
 ASPECT_COLS = ["service", "cleanliness", "value", "location_rating", "sleep_quality", "rooms"]
 ASPECT_LABELS = {
     "service": "Service",
@@ -34,7 +35,7 @@ ASPECT_COLORS = [
     "#4575b4", "#74add1", "#abd9e9", "#fdae61", "#f46d43", "#d73027"
 ]
 
-# â”€â”€ Data loaders â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ───────────────────────── Data loaders ─────────────────────────
 @st.cache_data
 def load_reviews(_conn):
     df = pd.read_sql(
@@ -98,12 +99,39 @@ def load_reviews_with_offering(_conn):
 
 df_full = load_reviews_with_offering(conn)
 
-# â”€â”€ Tabs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-tab1, tab2, tab3 = st.tabs(
+# ── Cluster model loader ──────────────────────────────────────────────────────
+@st.cache_resource
+def load_cluster_models():
+    """Load KMeans model, scaler, and cluster performance CSV from daniel/Assignment1/."""
+    if "DB_PATH" in st.session_state:
+        model_dir = Path(st.session_state["DB_PATH"]).resolve().parent
+    else:
+        model_dir = Path(__file__).resolve().parents[3] / "data"
+    try:
+        with open(model_dir / "scaler.pkl", "rb") as f:
+            scaler = pickle.load(f)
+        with open(model_dir / "kmeans.pkl", "rb") as f:
+            kmeans = pickle.load(f)
+        cluster_perf = pd.read_csv(model_dir / "cluster_performance.csv", index_col=0)
+        return scaler, kmeans, cluster_perf, None
+    except FileNotFoundError as e:
+        return None, None, None, str(e)
+
+CLUSTER_IDS = {0: "Bang for Buck", 1: "Location Trap", 2: "Premium Experience"}
+CLUSTER_DESC = {
+    "Bang for Buck":      "Strong value-for-money; guests appreciate affordability relative to quality.",
+    "Location Trap":      "Prime location drives ratings, but service and comfort lag behind.",
+    "Premium Experience": "Top-tier across all aspects; guests pay for and receive excellence.",
+}
+CLUSTER_COLORS = {"Bang for Buck": "#4575b4", "Location Trap": "#fdae61", "Premium Experience": "#1a9641"}
+
+# ─────────────────────────Tabs ─────────────────────────
+tab1, tab2, tab3, tab4 = st.tabs(
     [
         "Overall Rating",
         "Position Among Top and Bottom Performers",
-        "Contributor Activity Over Time",
+        "Aspect Contribution Over Time",
+        "⭐ Hotel Cluster Classification",
     ]
 )
 with tab1:
@@ -113,7 +141,7 @@ with tab1:
     fc1, fc2 = st.columns([1, 2])
 
     with fc1:
-        st.markdown("**Filter 1: Hotel ID / Offering ID**")
+        st.markdown("**Filter: My Offering ID (Hotel ID)**")
         hotel_id_t1 = st.text_input(
             "Offering ID",
             value="",
@@ -127,12 +155,12 @@ with tab1:
                 if match_t1.empty:
                     st.warning(f"Offering ID {hid_check} not found in data.")
                 else:
-                    st.caption(f"{len(match_t1):,} total reviews for Hotel {hid_check}")
+                    st.caption(f"{len(match_t1):,} total reviews for My Hotel {hid_check}")
             except ValueError:
                 st.error("Enter a valid numeric Offering ID.")
 
     with fc2:
-        st.markdown("**Filter 2: Date Range**")
+        st.markdown("**Filter: Date Range**")
         all_periods_t1 = sorted(df_full["review_date"].dt.to_period("M").unique())
         period_labels_t1 = [str(p) for p in all_periods_t1]
         rc1, rc2 = st.columns(2)
@@ -179,7 +207,7 @@ with tab1:
         except ValueError:
             pass
 
-    scope_t1 = f"Hotel {hotel_id_t1.strip()}" if hid_t1 else "All Hotels"
+    scope_t1 = f"My Hotel {hotel_id_t1.strip()}" if hid_t1 else "All Hotels"
 
     if fdf_all_t1.empty:
         st.warning("No reviews match the selected date range.")
@@ -254,10 +282,10 @@ with tab1:
         plt.close(fig_trend)
 
 # =============================================================================
-# Tab 3 -- Contributor Activity Over Time
+# Tab 3 -- Aspect Contribution Over Time
 # =============================================================================
 with tab3:
-    st.subheader("Contributor Activity Over Time")
+    st.subheader("Aspect Contribution Over Time")
     st.markdown(
         "Track how aspect scores — Service, Cleanliness, Value, Location, "
         "Sleep Quality, and Rooms — evolve over time. "
@@ -267,7 +295,7 @@ with tab3:
     # -- Filters ---------------------------------------------------------------
     fc1_t3, fc2_t3 = st.columns([1, 2])
     with fc1_t3:
-        st.markdown("**Filter 1: Hotel ID / Offering ID**")
+        st.markdown("**Filter: My Offering ID (Hotel ID)**")
         hotel_id_t3 = st.text_input(
             "Offering ID",
             value="",
@@ -281,12 +309,12 @@ with tab3:
                 if match_t3.empty:
                     st.warning(f"Offering ID {hid_check_t3} not found in data.")
                 else:
-                    st.caption(f"{len(match_t3):,} total reviews for Hotel {hid_check_t3}")
+                    st.caption(f"{len(match_t3):,} total reviews for My Hotel {hid_check_t3}")
             except ValueError:
                 st.error("Enter a valid numeric Offering ID.")
 
     with fc2_t3:
-        st.markdown("**Filter 2: Date Range**")
+        st.markdown("**Filter: Date Range**")
         all_periods_t3 = sorted(df["year_month"].unique())
         period_labels_t3 = [str(p) for p in all_periods_t3]
         rc1_t3, rc2_t3 = st.columns(2)
@@ -351,7 +379,7 @@ with tab3:
                 .resample(freq_t3).mean().reset_index()
             )
 
-        hotel_sfx_t3 = f" — Hotel {hid_t3} vs All Hotels" if hid_t3 else " — All Hotels"
+        hotel_sfx_t3 = f" — My Hotel {hid_t3} vs All Hotels" if hid_t3 else " — All Hotels"
 
         # Aspect Scores Over Time
         st.markdown("#### Aspect Scores Over Time")
@@ -394,7 +422,7 @@ with tab3:
         fig_vol3, ax = plt.subplots(figsize=(12, 3))
         ax.fill_between(vol_t3["review_date"], vol_t3["n_reviews"], alpha=0.4, color="#4575b4")
         ax.plot(vol_t3["review_date"], vol_t3["n_reviews"], color="#4575b4", linewidth=1.5)
-        vol_label_t3 = f"Hotel {hid_t3}" if hid_t3 else "All Hotels"
+        vol_label_t3 = f"My Hotel {hid_t3}" if hid_t3 else "All Hotels"
         ax.set_ylabel("Number of Reviews")
         ax.set_title(f"Review Volume — {granularity_t3} ({vol_label_t3})")
         fig_vol3.tight_layout()
@@ -433,6 +461,7 @@ with tab3:
                 ax.set_title(ASPECT_LABELS[col])
                 ax.set_ylabel("Avg Rating")
                 ax.legend(fontsize=7)
+                ax.tick_params(axis="x", rotation=45)
                 fig_ind3.tight_layout()
                 with cols_grid_t3[idx % 3]:
                     st.pyplot(fig_ind3)
@@ -470,7 +499,7 @@ with tab2:
     filter_col1, filter_col2 = st.columns([1, 2])
 
     with filter_col1:
-        st.markdown("**Filter 1: Hotel ID / Offering ID**")
+        st.markdown("**Filter: My Offering ID (Hotel ID)**")
         my_hotel_id_input = st.text_input("Offering ID", value="", placeholder="e.g. 93466  (leave blank for all)", key="my_hotel_id")
         enable_my_hotel = False
         my_hotel_ratings = {}
@@ -499,7 +528,7 @@ with tab2:
                 st.error("Enter a valid numeric Offering ID.")
 
     with filter_col2:
-        st.markdown("**Filter 2: Date Range**")
+        st.markdown("**Filter: Date Range**")
         all_periods_t2 = sorted(df["year_month"].unique())
         period_labels_t2 = [str(p) for p in all_periods_t2]
         rc1_t2, rc2_t2 = st.columns(2)
@@ -589,7 +618,7 @@ with tab2:
         vals6   = bot_n["avg_overall"].tolist()
         colors6 = ["#d73027"] * len(labels6)
         if enable_my_hotel:
-            labels6 = labels6 + ["Hotel ID / Offering ID"]
+            labels6 = labels6 + ["My Hotel"]
             vals6   = vals6   + [my_overall]
             colors6 = colors6 + ["#ff7f0e"]
         ax.barh(labels6, vals6, color=colors6)
@@ -648,3 +677,192 @@ with tab2:
             ),
             use_container_width=True,
         )
+
+# =============================================================================
+# Tab 4 -- Hotel Cluster Classification
+# =============================================================================
+with tab4:
+    st.subheader("Hotel Cluster Classification")
+    st.markdown(
+        "Classify a hotel into one of three market segments based on its averaged aspect ratings. "
+        "Segments are derived from a K-Means model trained on all hotels with ≥ 50 reviews."
+    )
+
+    scaler_t4, kmeans_t4, cluster_perf_t4, load_err_t4 = load_cluster_models()
+
+    if load_err_t4:
+        st.error(f"Could not load cluster model files: {load_err_t4}")
+        st.info("Expected files: `student-name-hotel-analytics/data/scaler.pkl`, `kmeans.pkl`, `cluster_performance.csv`")
+    else:
+        # -- Filter 1 ----------------------------------------------------------
+        fc1_t4, fc2_t4 = st.columns([1, 2])
+        with fc1_t4:
+            st.markdown("**Filter: My Offering ID (Hotel ID)**")
+            hotel_id_t4 = st.text_input(
+                "Offering ID",
+                value="",
+                placeholder="e.g. 93466  (leave blank for all)",
+                key="hotel_id_t4",
+            )
+            hid_t4 = None
+            hotel_avg_t4 = None
+            if hotel_id_t4.strip():
+                try:
+                    hid_t4 = int(hotel_id_t4.strip())
+                    match_t4 = df[df["offering_id"] == hid_t4]
+                    if match_t4.empty:
+                        st.warning(f"Offering ID {hid_t4} not found in data.")
+                    else:
+                        st.caption(f"{len(match_t4):,} total reviews for Hotel {hid_t4}")
+                        hotel_avg_t4 = match_t4[ASPECT_COLS].mean()
+                except ValueError:
+                    st.error("Enter a valid numeric Offering ID.")
+
+        with fc2_t4:
+            st.markdown("**Cluster Segments**")
+            for name, desc in CLUSTER_DESC.items():
+                color = CLUSTER_COLORS[name]
+                st.markdown(
+                    f"<span style='color:{color}; font-weight:600;'>● {name}</span> — {desc}",
+                    unsafe_allow_html=True,
+                )
+
+        st.markdown("---")
+
+        if hid_t4 and hotel_avg_t4 is not None:
+            # -- Classify the hotel --------------------------------------------
+            ratings_list = [hotel_avg_t4[c] for c in ASPECT_COLS]
+            ratings_scaled = scaler_t4.transform([ratings_list])
+            cluster_id_pred = int(kmeans_t4.predict(ratings_scaled)[0])
+            cluster_name = CLUSTER_IDS[cluster_id_pred]
+            cluster_color = CLUSTER_COLORS[cluster_name]
+            cluster_desc  = CLUSTER_DESC[cluster_name]
+
+            # -- Cluster badge -------------------------------------------------
+            st.markdown(
+                f"<div style='background:{cluster_color}18; border-left: 5px solid {cluster_color}; "
+                f"padding: 14px 18px; border-radius: 6px; margin-bottom: 16px;'>"
+                f"<span style='font-size:1.25rem; font-weight:700; color:{cluster_color};'>"
+                f"Hotel {hid_t4} → {cluster_name}</span><br>"
+                f"<span style='color:#555;'>{cluster_desc}</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+            # -- Build comparison table ----------------------------------------
+            peer_row = cluster_perf_t4.loc[cluster_id_pred]
+            rows_t4 = []
+            for col in ASPECT_COLS:
+                label    = ASPECT_LABELS[col]
+                my_val   = hotel_avg_t4[col]
+                peer_val = float(peer_row[col])
+                pct_diff = ((my_val - peer_val) / peer_val) * 100
+                direction = "Outperforming" if pct_diff >= 0 else "Underperforming"
+                rows_t4.append({
+                    "Aspect":          label,
+                    "Hotel Avg":       round(my_val, 2),
+                    "Cluster Peers Avg": round(peer_val, 2),
+                    "Diff %":          round(pct_diff, 1),
+                    "Status":          direction,
+                })
+            comp_df = pd.DataFrame(rows_t4)
+
+            # -- Side-by-side layout: chart + table ----------------------------
+            ch_col, tb_col = st.columns([3, 2])
+            with ch_col:
+                st.markdown("#### Aspect Ratings vs Cluster Peers")
+                x_t4   = np.arange(len(ASPECT_COLS))
+                width_t4 = 0.35
+                peer_vals_t4  = [float(peer_row[c]) for c in ASPECT_COLS]
+                hotel_vals_t4 = [hotel_avg_t4[c]    for c in ASPECT_COLS]
+
+                fig_t4, ax_t4 = plt.subplots(figsize=(8, 4))
+                ax_t4.bar(x_t4 - width_t4 / 2, peer_vals_t4,  width_t4, label="Cluster Peers Avg", color="#aec7e8")
+                ax_t4.bar(x_t4 + width_t4 / 2, hotel_vals_t4, width_t4, label=f"Hotel {hid_t4}",   color=cluster_color)
+                ax_t4.set_xticks(x_t4)
+                ax_t4.set_xticklabels([ASPECT_LABELS[c] for c in ASPECT_COLS], rotation=20, ha="right")
+                ax_t4.set_ylim(0, 5)
+                ax_t4.set_ylabel("Avg Rating (1–5)")
+                ax_t4.set_title(f"Hotel {hid_t4} vs '{cluster_name}' Cluster Peers")
+                ax_t4.legend(fontsize=9)
+                ax_t4.axhline(3.5, color="gray", linestyle="--", linewidth=0.8, alpha=0.5)
+                fig_t4.tight_layout()
+                st.pyplot(fig_t4)
+                plt.close(fig_t4)
+
+            with tb_col:
+                st.markdown("#### Performance vs Peers")
+                st.dataframe(
+                    comp_df.style.map(
+                        lambda v: f"color: {'green' if v == 'Outperforming' else 'red'}",
+                        subset=["Status"],
+                    ).map(
+                        lambda v: f"color: {'green' if isinstance(v, float) and v >= 0 else 'red'}",
+                        subset=["Diff %"],
+                    ),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+            # -- Cluster overview: all hotels in same cluster ------------------
+            st.markdown("#### Cluster Overview — All Hotels in This Segment")
+            cluster_hotels = hotel_stats[hotel_stats["offering_id"].isin(
+                df.groupby("offering_id").filter(
+                    lambda g: int(kmeans_t4.predict(scaler_t4.transform(
+                        [g[ASPECT_COLS].mean().tolist()]))[0]) == cluster_id_pred
+                )["offering_id"].unique()
+            )].copy()
+
+            if not cluster_hotels.empty:
+                st.caption(f"{len(cluster_hotels)} hotels classified as '{cluster_name}'")
+                fig_ov, ax_ov = plt.subplots(figsize=(10, 3.5))
+                avg_cols_map = dict(zip(ASPECT_COLS, ["avg_service", "avg_cleanliness", "avg_value",
+                                                       "avg_location", "avg_sleep_quality", "avg_rooms"]))
+                for i_c, col in enumerate(ASPECT_COLS):
+                    acol = avg_cols_map[col]
+                    if acol in cluster_hotels.columns:
+                        ax_ov.scatter(
+                            [ASPECT_LABELS[col]] * len(cluster_hotels),
+                            cluster_hotels[acol],
+                            alpha=0.4, color=ASPECT_COLORS[i_c], s=18, label="_nolegend_",
+                        )
+                        ax_ov.scatter(
+                            ASPECT_LABELS[col], hotel_avg_t4[col],
+                            color=cluster_color, s=90, zorder=5,
+                            marker="*",
+                            label=f"Hotel {hid_t4}" if i_c == 0 else "_nolegend_",
+                        )
+                ax_ov.set_ylim(1, 5)
+                ax_ov.set_ylabel("Avg Rating")
+                ax_ov.set_title(f"Distribution of Ratings within '{cluster_name}' Cluster")
+                ax_ov.legend(fontsize=9)
+                fig_ov.tight_layout()
+                st.pyplot(fig_ov)
+                plt.close(fig_ov)
+        else:
+            st.info("Enter a Hotel ID in Filter 1 above to classify the hotel and compare it to its cluster peers.")
+
+            # -- Show all-cluster summary when no hotel selected ---------------
+            st.markdown("#### Cluster Profiles — Overall Averages")
+            if cluster_perf_t4 is not None:
+                display_perf = cluster_perf_t4.copy()
+                display_perf.index = [CLUSTER_IDS.get(i, f"Cluster {i}") for i in display_perf.index]
+                display_perf.columns = [ASPECT_LABELS.get(c, c) for c in display_perf.columns]
+                st.dataframe(display_perf.round(2), use_container_width=True)
+
+                fig_cl, ax_cl = plt.subplots(figsize=(9, 4))
+                x_cl    = np.arange(len(display_perf.columns))
+                w_cl    = 0.25
+                offsets = [-w_cl, 0, w_cl]
+                for i_row, (seg, row) in enumerate(display_perf.iterrows()):
+                    color_cl = CLUSTER_COLORS.get(seg, "#888")
+                    ax_cl.bar(x_cl + offsets[i_row], row.values, w_cl, label=seg, color=color_cl)
+                ax_cl.set_xticks(x_cl)
+                ax_cl.set_xticklabels(display_perf.columns, rotation=20, ha="right")
+                ax_cl.set_ylim(0, 5)
+                ax_cl.set_ylabel("Avg Rating (1–5)")
+                ax_cl.set_title("Cluster Average Aspect Ratings")
+                ax_cl.legend(fontsize=9)
+                fig_cl.tight_layout()
+                st.pyplot(fig_cl)
+                plt.close(fig_cl)
