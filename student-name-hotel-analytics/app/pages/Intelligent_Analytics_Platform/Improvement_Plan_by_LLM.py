@@ -26,14 +26,8 @@ ASPECT_LABELS = {
     "rooms":           "Rooms",
 }
 
-# Detect whether a model is seq2seq (text2text) or causal (text-generation)
-_SEQ2SEQ_PREFIXES = ("t5", "flan", "bart", "pegasus", "mt5", "mbart")
-
-def _infer_task(model_name: str) -> str:
-    name_lower = model_name.lower()
-    if any(name_lower.startswith(p) or p in name_lower for p in _SEQ2SEQ_PREFIXES):
-        return "text2text-generation"
-    return "text-generation"
+# Fixed model
+HF_MODEL = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 
 # -- Page header --------------------------------------------------------------
 st.title("Hotel Improvement Plan")
@@ -46,36 +40,18 @@ st.markdown("---")
 # -- Sidebar / Config ---------------------------------------------------------
 with st.sidebar:
     st.header("Model Configuration")
-    hf_model = st.selectbox(
-        "Model",
-        options=[
-            "google/flan-t5-base",
-            "google/flan-t5-large",
-            "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-            "sshleifer/distilbart-cnn-12-6",
-        ],
-        index=0,
-        help=(
-            "flan-t5-base ~250 MB, CPU-friendly. "
-            "flan-t5-large ~770 MB, better quality. "
-            "TinyLlama 1.1 B params (causal). "
-            "Model files are downloaded from Hugging Face on first use."
-        ),
-    )
+    st.markdown(f"**Model:** `{HF_MODEL}`")
+    st.caption("TinyLlama 1.1 B causal language model. Downloaded from Hugging Face on first use.")
     max_new_tokens = st.slider("Max new tokens", 128, 512, 256, step=32)
     n_reviews = st.slider("Number of weak reviews to analyse", 3, 10, 5)
 
 # -- Model loader (cached across reruns) --------------------------------------
-@st.cache_resource(show_spinner="Loading model — this may take a minute on first use …")
-def load_pipeline(model_name: str):
-    from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoModelForCausalLM
-    task = _infer_task(model_name)
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    if task == "text2text-generation":
-        model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
-    else:
-        model = AutoModelForCausalLM.from_pretrained(model_name)
-    return tokenizer, model, task
+@st.cache_resource(show_spinner="Loading TinyLlama — this may take a minute on first use …")
+def load_pipeline():
+    from transformers import AutoTokenizer, AutoModelForCausalLM
+    tokenizer = AutoTokenizer.from_pretrained(HF_MODEL)
+    model = AutoModelForCausalLM.from_pretrained(HF_MODEL)
+    return tokenizer, model
 
 # -- Filter -------------------------------------------------------------------
 hotel_id_input = st.text_input(
@@ -203,79 +179,60 @@ st.subheader("AI-Generated Improvement Plan")
 generate_btn = st.button("Generate Improvement Plan", type="primary")
 
 if generate_btn:
-    tokenizer, model, task = load_pipeline(hf_model)
+    tokenizer, model = load_pipeline()
 
-    with st.spinner(f"Running {hf_model} locally …"):
+    with st.spinner("Running TinyLlama locally …"):
         try:
             import torch
 
-            if task == "text2text-generation":
-                # seq2seq models (flan-t5, bart) — plain prompt, 512-token limit
-                inputs = tokenizer(
-                    prompt,
-                    return_tensors="pt",
-                    truncation=True,
-                    max_length=512,
+            # TinyLlama is a chat model — apply the chat template
+            # so the model receives proper <|system|>/<|user|>/<|assistant|> tokens
+            system_msg = (
+                "You are a hospitality consultant. "
+                "Your task is to write a structured hotel improvement plan. "
+                "Do NOT summarise the reviews or answer questions. "
+                "Output ONLY the four-section plan."
+            )
+            user_msg = (
+                f"Here are {len(weak_reviews)} low-scoring guest reviews for the "
+                f"'{worst_label}' aspect of Hotel {hotel_id}:\n\n"
+                f"{reviews_block}\n\n"
+                f"Write an improvement plan with exactly these four sections:\n"
+                f"1. Root Cause Summary\n"
+                f"2. Quick Wins (within 1 month)\n"
+                f"3. Medium-Term Improvements (1-6 months)\n"
+                f"4. Success Metrics (KPIs)\n\n"
+                f"Be concise. Base every point on the reviews above."
+            )
+            messages = [
+                {"role": "system",  "content": system_msg},
+                {"role": "user",    "content": user_msg},
+            ]
+            formatted = tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+            inputs = tokenizer(
+                formatted,
+                return_tensors="pt",
+                truncation=True,
+                max_length=2048,
+            )
+            with torch.no_grad():
+                output_ids = model.generate(
+                    **inputs,
+                    max_new_tokens=max_new_tokens,
+                    do_sample=True,
+                    temperature=0.7,
+                    repetition_penalty=1.1,
+                    pad_token_id=tokenizer.eos_token_id,
                 )
-                with torch.no_grad():
-                    output_ids = model.generate(
-                        **inputs,
-                        max_new_tokens=max_new_tokens,
-                    )
-                plan_text = tokenizer.decode(
-                    output_ids[0], skip_special_tokens=True
-                ).strip()
-                prompt_used = prompt
-
-            else:
-                # Causal/chat models (TinyLlama etc.) — apply the chat template
-                # so the model receives proper <|system|>/<|user|>/<|assistant|> tokens
-                system_msg = (
-                    "You are a hospitality consultant. "
-                    "Your task is to write a structured hotel improvement plan. "
-                    "Do NOT summarise the reviews or answer questions. "
-                    "Output ONLY the four-section plan."
-                )
-                user_msg = (
-                    f"Here are {len(weak_reviews)} low-scoring guest reviews for the "
-                    f"'{worst_label}' aspect of Hotel {hotel_id}:\n\n"
-                    f"{reviews_block}\n\n"
-                    f"Write an improvement plan with exactly these four sections:\n"
-                    f"1. Root Cause Summary\n"
-                    f"2. Quick Wins (within 1 month)\n"
-                    f"3. Medium-Term Improvements (1-6 months)\n"
-                    f"4. Success Metrics (KPIs)\n\n"
-                    f"Be concise. Base every point on the reviews above."
-                )
-                messages = [
-                    {"role": "system",  "content": system_msg},
-                    {"role": "user",    "content": user_msg},
-                ]
-                formatted = tokenizer.apply_chat_template(
-                    messages,
-                    tokenize=False,
-                    add_generation_prompt=True,
-                )
-                inputs = tokenizer(
-                    formatted,
-                    return_tensors="pt",
-                    truncation=True,
-                    max_length=2048,
-                )
-                with torch.no_grad():
-                    output_ids = model.generate(
-                        **inputs,
-                        max_new_tokens=max_new_tokens,
-                        do_sample=True,
-                        temperature=0.7,
-                        repetition_penalty=1.1,
-                        pad_token_id=tokenizer.eos_token_id,
-                    )
-                new_tokens = output_ids[0][inputs["input_ids"].shape[1]:]
-                plan_text = tokenizer.decode(
-                    new_tokens, skip_special_tokens=True
-                ).strip()
-                prompt_used = formatted
+            new_tokens = output_ids[0][inputs["input_ids"].shape[1]:]
+            plan_text = tokenizer.decode(
+                new_tokens, skip_special_tokens=True
+            ).strip()
+            prompt_used = formatted
 
             if plan_text:
                 st.session_state["improvement_plan"] = plan_text
@@ -283,7 +240,7 @@ if generate_btn:
                 st.session_state["plan_aspect"]      = worst_label
                 st.session_state["plan_prompt"]      = prompt_used
             else:
-                st.error("The model returned an empty response. Try a larger model or increase Max new tokens.")
+                st.error("The model returned an empty response. Try increasing Max new tokens.")
 
         except Exception as exc:
             st.error(f"Model inference failed: {exc}")
