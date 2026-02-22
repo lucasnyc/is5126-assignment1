@@ -64,8 +64,6 @@ show_pages = {
         st.Page(PROJECT_ROOT / "app" / "pages" / "Intelligent_Analytics_Platform" / "Guest_Experience_Dashboard.py", title="My Hotel Guest Experience Dashboard", icon="🧠"),
         st.Page(PROJECT_ROOT / "app" / "pages" / "Intelligent_Analytics_Platform" / "Market_Position_Dashboard.py", title="My Hotel Market Position Dashboard", icon="🧠"),
         st.Page(PROJECT_ROOT / "app" / "pages" / "Intelligent_Analytics_Platform" / "Improvement_Plan_by_LLM.py", title="My Hotel Improvement Plan Dashboard", icon="🧠"),
-        st.Page(PROJECT_ROOT / "app" / "pages" / "Intelligent_Analytics_Platform" / "Investment_Return_Prediction.py", title="My Hotel Investment Return Prediction Dashboard", icon="🧠"),
-
     ],
 
 }
