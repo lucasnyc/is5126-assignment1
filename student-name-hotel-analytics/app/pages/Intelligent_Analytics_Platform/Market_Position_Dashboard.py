@@ -15,7 +15,7 @@ else:
 conn = sqlite3.connect(DB_PATH)
 
 # â”€â”€ Page header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-st.title("Customer Satisfaction Driver Dashboard")
+st.title("Market Position Dashboard")
 st.caption(
     "Understand what affects hotel ratings - and where to invest to improve guest experience."
 )
@@ -30,13 +30,16 @@ ASPECT_LABELS = {
     "sleep_quality": "Sleep Quality",
     "rooms": "Rooms",
 }
+ASPECT_COLORS = [
+    "#4575b4", "#74add1", "#abd9e9", "#fdae61", "#f46d43", "#d73027"
+]
 
 # â”€â”€ Data loaders â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 @st.cache_data
 def load_reviews(_conn):
     df = pd.read_sql(
         """
-        SELECT overall, service, cleanliness, value, location_rating,
+        SELECT offering_id, overall, service, cleanliness, value, location_rating,
                sleep_quality, rooms, title, text, review_date
         FROM reviews
         WHERE overall BETWEEN 1 AND 5
@@ -46,7 +49,9 @@ def load_reviews(_conn):
         _conn,
     )
     df["review_date"] = pd.to_datetime(df["review_date"], errors="coerce")
-    return df.dropna(subset=["review_date"])
+    df = df.dropna(subset=["review_date"])
+    df["year_month"] = df["review_date"].dt.to_period("M")
+    return df
 
 
 @st.cache_data
@@ -74,84 +79,386 @@ def load_hotel_stats(_conn):
 df = load_reviews(conn)
 hotel_stats = load_hotel_stats(conn)
 
+
+@st.cache_data
+def load_reviews_with_offering(_conn):
+    rdf = pd.read_sql(
+        """
+        SELECT offering_id, overall, review_date
+        FROM reviews
+        WHERE overall BETWEEN 1 AND 5
+          AND review_date IS NOT NULL
+        ORDER BY review_date
+        """,
+        _conn,
+    )
+    rdf["review_date"] = pd.to_datetime(rdf["review_date"], errors="coerce")
+    return rdf.dropna(subset=["review_date"])
+
+
+df_full = load_reviews_with_offering(conn)
+
 # â”€â”€ Tabs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-tab1, tab2, tab3, tab4 = st.tabs(
+tab1, tab2, tab3 = st.tabs(
     [
-        "â­ Rating Breakdown",
-        "ðŸ† Top Performers",
-        "ðŸ’¬ Top Topics",
-        "ðŸ“Š Feature Importance",
+        "Overall Rating",
+        "Position Among Top and Bottom Performers",
+        "Contributor Activity Over Time",
     ]
 )
 with tab1:
-    st.subheader("Rating Breakdown")
+    st.subheader("Overall Rating Trend")
 
-    col_a, col_b = st.columns(2)
+    # -- Filters ----------------------------------------------------------------
+    fc1, fc2 = st.columns([1, 2])
 
-    with col_a:
-        st.markdown("**Distribution of Overall Ratings (by Reviews)**")
-        rating_counts = df["overall"].value_counts().sort_index()
-        fig2, ax = plt.subplots(figsize=(6, 4))
-        bars = ax.bar(
-            rating_counts.index.astype(str),
-            rating_counts.values,
-            color=["#d73027", "#fc8d59", "#fee090", "#91bfdb", "#4575b4"],
+    with fc1:
+        st.markdown("**Filter 1: Hotel ID / Offering ID**")
+        hotel_id_t1 = st.text_input(
+            "Offering ID",
+            value="",
+            placeholder="e.g. 93466  (leave blank for all)",
+            key="hotel_id_t1",
         )
-        ax.set_xlabel("Overall Rating")
-        ax.set_ylabel("Number of Reviews")
-        ax.set_title("Rating Distribution")
-        for bar, v in zip(bars, rating_counts.values):
-            ax.text(
-                bar.get_x() + bar.get_width() / 2,
-                bar.get_height() + max(rating_counts) * 0.01,
-                f"{v:,}",
-                ha="center",
-                va="bottom",
-                fontsize=8,
-            )
-        fig2.tight_layout()
-        st.pyplot(fig2)
-        plt.close(fig2)
+        if hotel_id_t1.strip():
+            try:
+                hid_check = int(hotel_id_t1.strip())
+                match_t1 = df_full[df_full["offering_id"] == hid_check]
+                if match_t1.empty:
+                    st.warning(f"Offering ID {hid_check} not found in data.")
+                else:
+                    st.caption(f"{len(match_t1):,} total reviews for Hotel {hid_check}")
+            except ValueError:
+                st.error("Enter a valid numeric Offering ID.")
 
-    with col_b:
-        st.markdown("**Average Score by Rating Type**")
-        aspect_means = df[ASPECT_COLS].mean().rename(ASPECT_LABELS).sort_values(ascending=True)
-        median_val = aspect_means.median()
-        colors_bar = ["#4575b4" if v >= median_val else "#d73027" for v in aspect_means.values]
-        fig3, ax = plt.subplots(figsize=(6, 4))
-        ax.barh(aspect_means.index, aspect_means.values, color=colors_bar)
-        ax.set_xlim(0, 5)
-        ax.set_xlabel("Average Rating")
-        ax.set_title("Avg Aspect Rating (All Reviews)")
-        for i, v in enumerate(aspect_means.values):
-            ax.text(v + 0.05, i, f"{v:.2f}", va="center", fontsize=9)
-        fig3.tight_layout()
-        st.pyplot(fig3)
-        plt.close(fig3)
+    with fc2:
+        st.markdown("**Filter 2: Date Range**")
+        all_periods_t1 = sorted(df_full["review_date"].dt.to_period("M").unique())
+        period_labels_t1 = [str(p) for p in all_periods_t1]
+        rc1, rc2 = st.columns(2)
+        with rc1:
+            start_t1 = st.selectbox(
+                "From (Month-Year)",
+                options=period_labels_t1,
+                index=0,
+                key="start_t1",
+            )
+        with rc2:
+            end_t1 = st.selectbox(
+                "To (Month-Year)",
+                options=period_labels_t1,
+                index=len(period_labels_t1) - 1,
+                key="end_t1",
+            )
+        if start_t1 > end_t1:
+            st.error("'From' date must be before or equal to 'To' date.")
 
     st.markdown("---")
-    st.markdown("**Quarterly Trend by Rating Type**")
-    aspect_monthly = (
-        df.set_index("review_date")[ASPECT_COLS]
-        .resample("QE")
-        .mean()
-        .reset_index()
-    )
-    fig4, ax = plt.subplots(figsize=(12, 4))
-    for col in ASPECT_COLS:
-        valid = aspect_monthly[["review_date", col]].dropna()
-        ax.plot(valid["review_date"], valid[col], label=ASPECT_LABELS[col], linewidth=1.8)
-    ax.set_ylabel("Avg Rating")
-    ax.set_title("Quarterly Aspect Rating Trends")
-    ax.legend(loc="lower left", fontsize=8, ncol=3)
-    ax.set_ylim(1, 5)
-    fig4.tight_layout()
-    st.pyplot(fig4)
-    plt.close(fig4)
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-# Tab 3 - Top Performers
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # -- Filter the data --------------------------------------------------------
+    base_t1 = df_full.copy()
+    base_t1["year_month"] = base_t1["review_date"].dt.to_period("M")
+    start_p_t1 = pd.Period(start_t1, freq="M")
+    end_p_t1   = pd.Period(end_t1,   freq="M")
+
+    # All-hotels baseline (date range only)
+    fdf_all_t1 = base_t1[
+        (base_t1["year_month"] >= start_p_t1) &
+        (base_t1["year_month"] <= end_p_t1)
+    ]
+
+    # Hotel-specific subset (date range + hotel filter)
+    hid_t1 = None
+    fdf_hotel_t1 = None
+    if hotel_id_t1.strip():
+        try:
+            hid_t1 = int(hotel_id_t1.strip())
+            fdf_hotel_t1 = fdf_all_t1[fdf_all_t1["offering_id"] == hid_t1]
+            if fdf_hotel_t1.empty:
+                fdf_hotel_t1 = None
+        except ValueError:
+            pass
+
+    scope_t1 = f"Hotel {hotel_id_t1.strip()}" if hid_t1 else "All Hotels"
+
+    if fdf_all_t1.empty:
+        st.warning("No reviews match the selected date range.")
+    else:
+        gran_t1 = st.radio(
+            "Time granularity",
+            ["Monthly", "Quarterly", "Yearly"],
+            horizontal=True,
+            key="gran_t1",
+        )
+        freq_t1 = {"Monthly": "ME", "Quarterly": "QE", "Yearly": "YE"}[gran_t1]
+
+        # Resample all-hotels average
+        avg_all = (
+            fdf_all_t1.set_index("review_date")["overall"]
+            .resample(freq_t1).mean().reset_index()
+            .rename(columns={"overall": "avg_all"})
+        )
+
+        # Resample hotel-specific average (only when a hotel is selected)
+        avg_hotel = None
+        if fdf_hotel_t1 is not None:
+            avg_hotel = (
+                fdf_hotel_t1.set_index("review_date")["overall"]
+                .resample(freq_t1).mean().reset_index()
+                .rename(columns={"overall": "avg_hotel"})
+            )
+
+        # Review volume for the selected scope
+        vol_src = fdf_hotel_t1 if fdf_hotel_t1 is not None else fdf_all_t1
+        vol_trend = (
+            vol_src.set_index("review_date")["overall"]
+            .resample(freq_t1).count().reset_index()
+            .rename(columns={"overall": "n_reviews"})
+        )
+
+        fig_trend, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 6), sharex=True)
+
+        # All-hotels line (always shown)
+        ax1.plot(
+            avg_all["review_date"], avg_all["avg_all"],
+            color="#aec7e8", linewidth=1.8, marker="o", markersize=2.5,
+            label="All Hotels Avg",
+        )
+
+        # Selected-hotel line (shown only when a hotel ID is entered)
+        if avg_hotel is not None:
+            ax1.plot(
+                avg_hotel["review_date"], avg_hotel["avg_hotel"],
+                color="#d73027", linewidth=2.2, marker="o", markersize=3.5,
+                label=f"Hotel {hid_t1} Avg",
+            )
+
+        ax1.set_ylabel("Avg Overall Rating")
+        ax1.set_ylim(1, 5)
+        title_sfx = f"Hotel {hid_t1} vs All Hotels" if hid_t1 else "All Hotels"
+        ax1.set_title(f"Avg Overall Rating — {gran_t1} ({title_sfx})")
+        ax1.legend(fontsize=9)
+
+        ax2.fill_between(
+            vol_trend["review_date"], vol_trend["n_reviews"],
+            alpha=0.4, color="#74add1",
+        )
+        ax2.plot(
+            vol_trend["review_date"], vol_trend["n_reviews"],
+            color="#74add1", linewidth=1.5,
+        )
+        ax2.set_ylabel(f"Review Volume ({scope_t1})")
+
+        fig_trend.tight_layout()
+        st.pyplot(fig_trend)
+        plt.close(fig_trend)
+
+# =============================================================================
+# Tab 3 -- Contributor Activity Over Time
+# =============================================================================
+with tab3:
+    st.subheader("Contributor Activity Over Time")
+    st.markdown(
+        "Track how aspect scores — Service, Cleanliness, Value, Location, "
+        "Sleep Quality, and Rooms — evolve over time. "
+        "Enter a Hotel ID to overlay that hotel's trend against all hotels."
+    )
+
+    # -- Filters ---------------------------------------------------------------
+    fc1_t3, fc2_t3 = st.columns([1, 2])
+    with fc1_t3:
+        st.markdown("**Filter 1: Hotel ID / Offering ID**")
+        hotel_id_t3 = st.text_input(
+            "Offering ID",
+            value="",
+            placeholder="e.g. 93466  (leave blank for all)",
+            key="hotel_id_t3",
+        )
+        if hotel_id_t3.strip():
+            try:
+                hid_check_t3 = int(hotel_id_t3.strip())
+                match_t3 = df[df["offering_id"] == hid_check_t3]
+                if match_t3.empty:
+                    st.warning(f"Offering ID {hid_check_t3} not found in data.")
+                else:
+                    st.caption(f"{len(match_t3):,} total reviews for Hotel {hid_check_t3}")
+            except ValueError:
+                st.error("Enter a valid numeric Offering ID.")
+
+    with fc2_t3:
+        st.markdown("**Filter 2: Date Range**")
+        all_periods_t3 = sorted(df["year_month"].unique())
+        period_labels_t3 = [str(p) for p in all_periods_t3]
+        rc1_t3, rc2_t3 = st.columns(2)
+        with rc1_t3:
+            start_t3 = st.selectbox(
+                "From (Month-Year)",
+                options=period_labels_t3,
+                index=0,
+                key="start_t3",
+            )
+        with rc2_t3:
+            end_t3 = st.selectbox(
+                "To (Month-Year)",
+                options=period_labels_t3,
+                index=len(period_labels_t3) - 1,
+                key="end_t3",
+            )
+        if start_t3 > end_t3:
+            st.error("'From' date must be before or equal to 'To' date.")
+
+    st.markdown("---")
+
+    # -- Build filtered datasets -----------------------------------------------
+    start_p_t3 = pd.Period(start_t3, freq="M")
+    end_p_t3   = pd.Period(end_t3,   freq="M")
+
+    df_all_t3 = df[
+        (df["year_month"] >= start_p_t3) &
+        (df["year_month"] <= end_p_t3)
+    ]
+
+    hid_t3 = None
+    df_hotel_t3 = None
+    if hotel_id_t3.strip():
+        try:
+            hid_t3 = int(hotel_id_t3.strip())
+            candidate_t3 = df_all_t3[df_all_t3["offering_id"] == hid_t3]
+            if not candidate_t3.empty:
+                df_hotel_t3 = candidate_t3
+        except ValueError:
+            pass
+
+    if df_all_t3.empty:
+        st.warning("No reviews match the selected date range.")
+    else:
+        granularity_t3 = st.radio(
+            "Time granularity",
+            ["Monthly", "Quarterly", "Yearly"],
+            horizontal=True,
+            key="granularity_t3",
+        )
+        freq_t3 = {"Monthly": "ME", "Quarterly": "QE", "Yearly": "YE"}[granularity_t3]
+
+        ts_all_t3 = (
+            df_all_t3.set_index("review_date")[ASPECT_COLS]
+            .resample(freq_t3).mean().reset_index()
+        )
+        ts_hotel_t3 = None
+        if df_hotel_t3 is not None:
+            ts_hotel_t3 = (
+                df_hotel_t3.set_index("review_date")[ASPECT_COLS]
+                .resample(freq_t3).mean().reset_index()
+            )
+
+        hotel_sfx_t3 = f" — Hotel {hid_t3} vs All Hotels" if hid_t3 else " — All Hotels"
+
+        # Aspect Scores Over Time
+        st.markdown("#### Aspect Scores Over Time")
+        fig_ts3, ax = plt.subplots(figsize=(12, 5))
+        for col, color in zip(ASPECT_COLS, ASPECT_COLORS):
+            valid_all = ts_all_t3[["review_date", col]].dropna()
+            if not valid_all.empty:
+                ax.plot(
+                    valid_all["review_date"], valid_all[col],
+                    label=f"{ASPECT_LABELS[col]} (All)",
+                    color=color, linewidth=1.4, linestyle="--",
+                    alpha=0.55, marker="o", markersize=2,
+                )
+            if ts_hotel_t3 is not None:
+                valid_h = ts_hotel_t3[["review_date", col]].dropna()
+                if not valid_h.empty:
+                    ax.plot(
+                        valid_h["review_date"], valid_h[col],
+                        label=f"{ASPECT_LABELS[col]} (Hotel {hid_t3})",
+                        color=color, linewidth=2.2, linestyle="-",
+                        marker="o", markersize=3.5,
+                    )
+        ax.set_ylabel("Average Rating (1-5)")
+        ax.set_ylim(1, 5)
+        ax.set_title(f"Aspect Ratings — {granularity_t3}{hotel_sfx_t3}")
+        ax.legend(loc="lower left", fontsize=7, ncol=3)
+        ax.axhline(3.5, color="gray", linestyle="--", linewidth=0.8, alpha=0.5)
+        fig_ts3.tight_layout()
+        st.pyplot(fig_ts3)
+        plt.close(fig_ts3)
+
+        # Review Volume Over Time
+        st.markdown("#### Review Volume Over Time")
+        vol_src_t3 = df_hotel_t3 if df_hotel_t3 is not None else df_all_t3
+        vol_t3 = (
+            vol_src_t3.set_index("review_date")["overall"]
+            .resample(freq_t3).count().reset_index()
+            .rename(columns={"overall": "n_reviews"})
+        )
+        fig_vol3, ax = plt.subplots(figsize=(12, 3))
+        ax.fill_between(vol_t3["review_date"], vol_t3["n_reviews"], alpha=0.4, color="#4575b4")
+        ax.plot(vol_t3["review_date"], vol_t3["n_reviews"], color="#4575b4", linewidth=1.5)
+        vol_label_t3 = f"Hotel {hid_t3}" if hid_t3 else "All Hotels"
+        ax.set_ylabel("Number of Reviews")
+        ax.set_title(f"Review Volume — {granularity_t3} ({vol_label_t3})")
+        fig_vol3.tight_layout()
+        st.pyplot(fig_vol3)
+        plt.close(fig_vol3)
+
+        # Individual Aspect Trend Charts
+        with st.expander("Individual Aspect Trend Charts"):
+            cols_grid_t3 = st.columns(3)
+            for idx, (col, color) in enumerate(zip(ASPECT_COLS, ASPECT_COLORS)):
+                fig_ind3, ax = plt.subplots(figsize=(5, 3))
+                valid_all_ind = ts_all_t3[["review_date", col]].dropna()
+                if not valid_all_ind.empty:
+                    ax.plot(
+                        valid_all_ind["review_date"], valid_all_ind[col],
+                        color=color, linewidth=1.4, linestyle="--", alpha=0.55,
+                        label="All Hotels",
+                    )
+                    ax.fill_between(
+                        valid_all_ind["review_date"], valid_all_ind[col],
+                        alpha=0.08, color=color,
+                    )
+                if ts_hotel_t3 is not None:
+                    valid_h_ind = ts_hotel_t3[["review_date", col]].dropna()
+                    if not valid_h_ind.empty:
+                        ax.plot(
+                            valid_h_ind["review_date"], valid_h_ind[col],
+                            color=color, linewidth=2.2, linestyle="-",
+                            label=f"Hotel {hid_t3}",
+                        )
+                        ax.fill_between(
+                            valid_h_ind["review_date"], valid_h_ind[col],
+                            alpha=0.18, color=color,
+                        )
+                ax.set_ylim(1, 5)
+                ax.set_title(ASPECT_LABELS[col])
+                ax.set_ylabel("Avg Rating")
+                ax.legend(fontsize=7)
+                fig_ind3.tight_layout()
+                with cols_grid_t3[idx % 3]:
+                    st.pyplot(fig_ind3)
+                plt.close(fig_ind3)
+
+        # Summary stats table
+        st.markdown("#### Aspect Summary Statistics (Filtered Period)")
+        stats_src_t3 = df_hotel_t3 if df_hotel_t3 is not None else df_all_t3
+        stats_label_t3 = f"Hotel {hid_t3}" if hid_t3 else "All Hotels"
+        stat_rows_t3 = []
+        for col in ASPECT_COLS:
+            s = stats_src_t3[col].dropna()
+            stat_rows_t3.append({
+                "Aspect": ASPECT_LABELS[col],
+                f"Mean ({stats_label_t3})": round(s.mean(), 3),
+                "Median": round(s.median(), 3),
+                "Std Dev": round(s.std(), 3),
+                "Min": round(s.min(), 2),
+                "Max": round(s.max(), 2),
+                "Reviews": int(s.count()),
+            })
+        st.dataframe(pd.DataFrame(stat_rows_t3), use_container_width=True, hide_index=True)
+
+# =============================================================================
+# Tab 2 -- Position Among Top and Bottom Performers
+# =============================================================================
 with tab2:
     st.subheader("Top & Bottom Performing Hotels")
 
@@ -160,12 +467,11 @@ with tab2:
     ASP_RAW  = ["service", "cleanliness", "value", "location_rating", "sleep_quality", "rooms"]
 
     # ── Filter row ────────────────────────────────────────────────────────────
-    filter_col1, filter_col2 = st.columns([1, 1])
+    filter_col1, filter_col2 = st.columns([1, 2])
 
     with filter_col1:
-        st.markdown("#### Filter 1 — My Hotel")
-        st.caption("Enter your hotel's Offering ID to benchmark it against top/bottom performers.")
-        my_hotel_id_input = st.text_input("Offering ID", value="", placeholder="e.g. 93466", key="my_hotel_id")
+        st.markdown("**Filter 1: Hotel ID / Offering ID**")
+        my_hotel_id_input = st.text_input("Offering ID", value="", placeholder="e.g. 93466  (leave blank for all)", key="my_hotel_id")
         enable_my_hotel = False
         my_hotel_ratings = {}
         my_overall = None
@@ -188,30 +494,37 @@ with tab2:
                         "sleep_quality":   r["avg_sleep_quality"],
                         "rooms":           r["avg_rooms"],
                     }
-                    st.success(f"Hotel {my_hotel_id} loaded — Avg Overall: {my_overall:.2f}")
+                    st.caption(f"{int(r['n_reviews']):,} total reviews for Hotel {my_hotel_id}")
             except ValueError:
-                st.error("Please enter a valid numeric Offering ID.")
+                st.error("Enter a valid numeric Offering ID.")
 
     with filter_col2:
-        st.markdown("#### Filter 2 — Date Range")
-        st.caption("Restrict data to reviews posted within a date range.")
-        min_date = df["review_date"].min().date()
-        max_date = df["review_date"].max().date()
-        date_range = st.date_input(
-            "Select date range",
-            value=(min_date, max_date),
-            min_value=min_date,
-            max_value=max_date,
-            key="date_range_filter",
-        )
+        st.markdown("**Filter 2: Date Range**")
+        all_periods_t2 = sorted(df["year_month"].unique())
+        period_labels_t2 = [str(p) for p in all_periods_t2]
+        rc1_t2, rc2_t2 = st.columns(2)
+        with rc1_t2:
+            start_t2 = st.selectbox(
+                "From (Month-Year)",
+                options=period_labels_t2,
+                index=0,
+                key="start_t2",
+            )
+        with rc2_t2:
+            end_t2 = st.selectbox(
+                "To (Month-Year)",
+                options=period_labels_t2,
+                index=len(period_labels_t2) - 1,
+                key="end_t2",
+            )
+        if start_t2 > end_t2:
+            st.error("'From' date must be before or equal to 'To' date.")
 
     st.markdown("---")
 
     # ── Recompute hotel stats filtered by date range ──────────────────────────
     @st.cache_data
     def hotel_stats_by_daterange(_conn, start_date: str, end_date: str):
-        if start_date == str(df["review_date"].min().date()) and end_date == str(df["review_date"].max().date()):
-            return hotel_stats
         query = """
             SELECT offering_id,
                    COUNT(*) AS n_reviews,
@@ -235,16 +548,13 @@ with tab2:
         _conn2.close()
         return result
 
-    # handle both a complete (start, end) tuple and a single-date selection
-    if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
-        start_d, end_d = date_range
-    else:
-        start_d = end_d = date_range[0] if isinstance(date_range, (list, tuple)) else date_range
+    start_d = pd.Period(start_t2, freq="M").start_time.date()
+    end_d   = pd.Period(end_t2,   freq="M").end_time.date()
 
     hs = hotel_stats_by_daterange(conn, str(start_d), str(end_d))
 
-    is_full_range = (start_d == min_date and end_d == max_date)
-    label_sfx = " (all dates)" if is_full_range else f" ({start_d.strftime('%d %b %Y')} – {end_d.strftime('%d %b %Y')})"
+    is_full_range = (start_t2 == period_labels_t2[0] and end_t2 == period_labels_t2[-1])
+    label_sfx = " (all dates)" if is_full_range else f" ({start_t2} – {end_t2})"
 
     n = st.slider("Number of hotels to show", 5, 20, 10, key="top_n_slider")
     top_n = hs.nlargest(n, "avg_overall").reset_index(drop=True)
@@ -337,168 +647,4 @@ with tab2:
                 subset=["Status"],
             ),
             use_container_width=True,
-        )
-
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-# Tab 4 - Top Topics
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-with tab3:
-    st.subheader("Top Positive & Negative Review Topics")
-    st.markdown(
-        "Keywords extracted from high-rated (4-5 stars) and low-rated (1-2 stars) reviews "
-        "reveal what guests praise and what frustrates them."
-    )
-
-    try:
-        from sklearn.feature_extraction.text import CountVectorizer  # type: ignore
-
-        @st.cache_data
-        def extract_topics(_conn, n_words: int = 20):
-            pos_texts = pd.read_sql(
-                "SELECT text FROM reviews WHERE overall >= 4 AND text IS NOT NULL ORDER BY RANDOM() LIMIT 20000",
-                _conn,
-            )["text"].tolist()
-            neg_texts = pd.read_sql(
-                "SELECT text FROM reviews WHERE overall <= 2 AND text IS NOT NULL ORDER BY RANDOM() LIMIT 20000",
-                _conn,
-            )["text"].tolist()
-
-            cv = CountVectorizer(
-                stop_words="english", max_features=300, ngram_range=(1, 2), min_df=5
-            )
-            cv.fit(pos_texts + neg_texts)
-            words = cv.get_feature_names_out()
-            pos_counts = np.asarray(cv.transform(pos_texts).sum(axis=0)).flatten()
-            neg_counts = np.asarray(cv.transform(neg_texts).sum(axis=0)).flatten()
-
-            pos_top = pd.DataFrame(
-                {"topic": words[np.argsort(pos_counts)[-n_words:][::-1]],
-                 "count": pos_counts[np.argsort(pos_counts)[-n_words:][::-1]]}
-            )
-            neg_top = pd.DataFrame(
-                {"topic": words[np.argsort(neg_counts)[-n_words:][::-1]],
-                 "count": neg_counts[np.argsort(neg_counts)[-n_words:][::-1]]}
-            )
-            return pos_top, neg_top
-
-        pos_df, neg_df = extract_topics(conn)
-        c1, c2 = st.columns(2)
-
-        with c1:
-            st.markdown("**Top Positive Topics** (Overall 4-5 stars)")
-            fig8, ax = plt.subplots(figsize=(6, 7))
-            ax.barh(pos_df["topic"][::-1], pos_df["count"][::-1], color="#4575b4")
-            ax.set_xlabel("Frequency")
-            ax.set_title("Top Positive Keywords")
-            fig8.tight_layout()
-            st.pyplot(fig8)
-            plt.close(fig8)
-
-        with c2:
-            st.markdown("**Top Negative Topics** (Overall 1-2 stars)")
-            fig9, ax = plt.subplots(figsize=(6, 7))
-            ax.barh(neg_df["topic"][::-1], neg_df["count"][::-1], color="#d73027")
-            ax.set_xlabel("Frequency")
-            ax.set_title("Top Negative Keywords")
-            fig9.tight_layout()
-            st.pyplot(fig9)
-            plt.close(fig9)
-
-        with st.expander("Interpretation"):
-            st.markdown(
-                "Positive reviews concentrate on words like *great*, *clean*, *staff*, *location*, "
-                "and *comfortable*, confirming that service quality and cleanliness are the main "
-                "drivers of delight. Negative reviews surface words like *dirty*, *noise*, *rude*, "
-                "and *disappointing*, highlighting the failure modes hotels must address first."
-            )
-
-    except ImportError:
-        st.warning("Install `scikit-learn` to enable topic extraction (`pip install scikit-learn`).")
-
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-# Tab 5 - Feature Importance
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-with tab4:
-    st.subheader("Feature Importance: What Drives the Overall Rating?")
-    st.info("Cleanliness impacts the overall rating the most - invest here first to see the greatest lift in scores.")
-
-    rated = df[ASPECT_COLS + ["overall"]].dropna()
-    corr = (
-        rated[ASPECT_COLS]
-        .corrwith(rated["overall"])
-        .rename(ASPECT_LABELS)
-        .sort_values(ascending=True)
-    )
-
-    try:
-        from sklearn.ensemble import RandomForestRegressor  # type: ignore
-
-        @st.cache_data
-        def get_rf_importance(data: pd.DataFrame):
-            sample = data.sample(min(50_000, len(data)), random_state=42)
-            rf = RandomForestRegressor(n_estimators=200, random_state=42, n_jobs=-1)
-            rf.fit(sample[ASPECT_COLS], sample["overall"])
-            return rf.feature_importances_
-
-        importances = get_rf_importance(rated)
-        imp_series = (
-            pd.Series(importances, index=[ASPECT_LABELS[c] for c in ASPECT_COLS])
-            .sort_values(ascending=True)
-        )
-
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown("**Pearson Correlation with Overall Rating**")
-            fig10, ax = plt.subplots(figsize=(6, 4))
-            ax.barh(corr.index, corr.values, color="#4575b4")
-            ax.set_xlim(0, 1)
-            ax.set_xlabel("Correlation coefficient")
-            ax.set_title("Aspect â†’ Overall Correlation")
-            for i, v in enumerate(corr.values):
-                ax.text(v + 0.01, i, f"{v:.3f}", va="center", fontsize=9)
-            fig10.tight_layout()
-            st.pyplot(fig10)
-            plt.close(fig10)
-
-        with c2:
-            st.markdown("**Random Forest Feature Importance**")
-            fig11, ax = plt.subplots(figsize=(6, 4))
-            ax.barh(imp_series.index, imp_series.values, color="#1f77b4")
-            ax.set_xlabel("Importance Score")
-            ax.set_title("RF Feature Importance (predicting Overall)")
-            for i, v in enumerate(imp_series.values):
-                ax.text(v + 0.002, i, f"{v:.3f}", va="center", fontsize=9)
-            fig11.tight_layout()
-            st.pyplot(fig11)
-            plt.close(fig11)
-
-        top_driver = imp_series.idxmax()
-        st.success(
-            f"**Key Insight:** *{top_driver}* is the strongest driver of overall rating. "
-            f"Hotels that improve {top_driver.lower()} scores will see the greatest lift "
-            "in guest satisfaction."
-        )
-
-    except ImportError:
-        # Fallback: correlation only
-        fig10, ax = plt.subplots(figsize=(8, 4))
-        ax.barh(corr.index, corr.values, color="#4575b4")
-        ax.set_xlim(0, 1)
-        ax.set_xlabel("Correlation coefficient")
-        ax.set_title("Aspect â†’ Overall Correlation")
-        for i, v in enumerate(corr.values):
-            ax.text(v + 0.01, i, f"{v:.3f}", va="center", fontsize=9)
-        fig10.tight_layout()
-        st.pyplot(fig10)
-        plt.close(fig10)
-        st.warning("Install `scikit-learn` for Random Forest importance (`pip install scikit-learn`).")
-
-    st.markdown("---")
-    st.markdown("### Business Recommendations")
-    top3 = corr.sort_values(ascending=False).head(3)
-    labels_map = {1: "highest", 2: "second-highest", 3: "third-highest"}
-    for rank, (aspect, val) in enumerate(top3.items(), 1):
-        st.markdown(
-            f"{rank}. **{aspect}** - correlation **{val:.3f}** with overall rating. "
-            f"This aspect delivers the {labels_map[rank]} impact on guest satisfaction."
         )
