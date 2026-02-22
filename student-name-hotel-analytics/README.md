@@ -70,10 +70,6 @@ student-name-hotel-analytics/
 │   └── query_results.txt                 # SQL query benchmarks
 │
 ├── reports/                              # Generated analysis reports
-├── src/
-│   ├── benchmarking.py                   # Benchmarking helper functions
-│   ├── data_processing.py                # Data cleaning & transformation utilities
-│   └── utils.py                          # General utility functions
 │
 ├── requirements.txt                      # Python dependencies
 └── README.md
