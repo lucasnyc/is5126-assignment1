@@ -295,13 +295,22 @@ CHOKEPOINTS = {
     "Panama Canal":       ["Panama"],
     "Strait of Hormuz":   ["Iran (Islamic Republic of)", "Oman"],
     "Strait of Malacca":  ["Singapore", "Malaysia", "Indonesia"],
-    "Bab el-Mandeb":      ["Yemen", "Djibouti"],
+}
+
+# Maps display name → maritime waypoint key(s) for globe visualization.
+# Used to pin the "blocked" X marker at the actual strait/canal location
+# rather than at a country centroid.
+CHOKEPOINT_WAYPOINTS = {
+    "Suez Canal":        ["SUEZ_S", "SUEZ_N"],
+    "Panama Canal":      ["PANAMA_ATL", "PANAMA_PAC"],
+    "Strait of Hormuz":  ["HORMUZ"],
+    "Strait of Malacca": ["MALACCA"],
 }
 
 # All chokepoint countries flattened (used by Resilience Score)
 ALL_CHOKEPOINT_COUNTRIES = sorted(
     {c for countries in CHOKEPOINTS.values() for c in countries}
-)  # 10 countries: Djibouti, Egypt, Indonesia, Iran, Malaysia, Oman, Panama, Singapore, Yemen
+)  # 7 countries: Egypt, Indonesia, Iran (Islamic Republic of), Malaysia, Oman, Panama, Singapore
 
 # ─── Tariff regions ───────────────────────────────────────────────────────────
 TARIFF_REGIONS = {

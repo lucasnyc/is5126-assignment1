@@ -18,7 +18,7 @@ import plotly.graph_objects as go
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from config import (
-    COUNTRY_COORDS, CHOKEPOINTS,
+    COUNTRY_COORDS, CHOKEPOINTS, CHOKEPOINT_WAYPOINTS,
     MARITIME_WAYPOINTS, MARITIME_EDGES, COUNTRY_PORT_WAYPOINT,
 )
 
@@ -94,18 +94,36 @@ def _country_port_wp(country: str) -> str | None:
                key=lambda kv: _hav(coord, kv[1]))[0]
 
 
-def _maritime_lats_lons(path: list[str]) -> tuple[list, list]:
+def _maritime_lats_lons(
+    path: list[str],
+    blocked_wps: set[str] | None = None,
+) -> tuple[list, list]:
     """
     Build a lat/lon trace that follows actual maritime sea lanes.
 
     For each consecutive pair in `path`, routes through maritime waypoints
     (Dijkstra on the waypoint graph) instead of drawing a straight line.
     Starts and ends at each country's geographic centroid.
+
+    Parameters
+    ----------
+    path        : list of country names (trade-graph route)
+    blocked_wps : waypoint node keys to remove before path-finding, so the
+                  visual route honours the same chokepoint closures as the
+                  trade routing engine (e.g. removing SUEZ_S + SUEZ_N forces
+                  the drawn line around Africa when Suez Canal is blocked).
     """
     if not path:
         return [], []
 
+    blocked_wps = blocked_wps or set()
     G = _maritime_graph()
+    if blocked_wps:
+        G = G.copy()          # don't mutate the lru_cache singleton
+        for wp in blocked_wps:
+            if G.has_node(wp):
+                G.remove_node(wp)
+
     lats: list = []
     lons: list = []
 
@@ -119,6 +137,13 @@ def _maritime_lats_lons(path: list[str]) -> tuple[list, list]:
     for i in range(len(path) - 1):
         wp_start = _country_port_wp(path[i])
         wp_end   = _country_port_wp(path[i + 1])
+
+        # If a country's own port waypoint was blocked, skip waypoint routing
+        # for that leg and fall through to the straight-segment fallback.
+        if wp_start in blocked_wps:
+            wp_start = None
+        if wp_end in blocked_wps:
+            wp_end = None
 
         if wp_start and wp_end and wp_start != wp_end:
             try:
@@ -185,59 +210,64 @@ def make_route_globe(
     """Baseline vs. scenario route comparison globe."""
     fig = go.Figure()
 
+    # Blocked markers sit at maritime waypoint coords (the actual strait/canal),
+    # not at country centroids.
     blocked_countries = [c for cp in blocked_chokepoints
                          for c in CHOKEPOINTS.get(cp, [])]
-    if blocked_countries:
-        b_lats = [_coords(c)[0] for c in blocked_countries if _coords(c)]
-        b_lons = [_coords(c)[1] for c in blocked_countries if _coords(c)]
-        b_names = [c for c in blocked_countries if _coords(c)]
-        fig.add_trace(go.Scattergeo(
-            lat=b_lats, lon=b_lons,
-            mode="markers+text",
-            marker=dict(size=14, symbol="x", color=COLORS["blocked"],
-                        line=dict(width=2, color="white")),
-            text=b_names, textposition="top center",
-            textfont=dict(color="white", size=10),
-            name="Blocked",
-            hovertemplate="%{text}<br><b>BLOCKED</b><extra></extra>",
-        ))
+    if blocked_chokepoints:
+        b_lats, b_lons, b_names = [], [], []
+        for cp in blocked_chokepoints:
+            for wp in CHOKEPOINT_WAYPOINTS.get(cp, []):
+                coord = MARITIME_WAYPOINTS.get(wp)
+                if coord:
+                    b_lats.append(coord[0])
+                    b_lons.append(coord[1])
+                    b_names.append(cp)
+        if b_lats:
+            fig.add_trace(go.Scattergeo(
+                lat=b_lats, lon=b_lons,
+                mode="markers+text",
+                marker=dict(size=14, symbol="x", color=COLORS["blocked"],
+                            line=dict(width=2, color="white")),
+                text=b_names, textposition="top center",
+                textfont=dict(color="white", size=10),
+                name="Blocked",
+                hovertemplate="%{text}<br><b>BLOCKED</b><extra></extra>",
+            ))
+
+    blocked_wps = {wp for cp in blocked_chokepoints
+                   for wp in CHOKEPOINT_WAYPOINTS.get(cp, [])}
 
     for i, route_dict in enumerate(baseline_routes[:show_top_k]):
         path = route_dict["path"]
-        lats, lons = _maritime_lats_lons(path)
+        lats, lons = _maritime_lats_lons(path, blocked_wps)
         is_best = (i == 0)
         fig.add_trace(go.Scattergeo(
             lat=lats, lon=lons,
-            mode="lines+markers",
+            mode="lines",
             line=dict(width=4 if is_best else 2, color=ROUTE_COLORS[i]),
-            marker=dict(size=6 if is_best else 4, color=ROUTE_COLORS[i]),
             name="Baseline (Optimal)" if is_best else f"Baseline Route {i+1}",
-            hovertemplate="<b>%{text}</b><extra></extra>",
-            text=[f"{c}<br>Cost: {route_dict['cost']:.4f}<br>"
-                  f"Lead time: {route_dict['lead_time_days']:.0f}d" if j == 0 else c
-                  for j, c in enumerate(path)],
+            hoverinfo="skip",
             legendgroup="baseline",
         ))
 
     if scenario_routes:
         for i, route_dict in enumerate(scenario_routes[:show_top_k]):
             path = route_dict["path"]
-            lats, lons = _maritime_lats_lons(path)
+            lats, lons = _maritime_lats_lons(path, blocked_wps)
             is_best = (i == 0)
             fig.add_trace(go.Scattergeo(
                 lat=lats, lon=lons,
-                mode="lines+markers",
+                mode="lines",
                 line=dict(width=4 if is_best else 2,
                           color=COLORS["scenario"] if is_best else "#E67E22",
                           dash="dash"),
-                marker=dict(size=6 if is_best else 4, color=COLORS["scenario"]),
                 name="Scenario (Rerouted)" if is_best else f"Scenario Route {i+1}",
+                hoverinfo="skip",
                 legendgroup="scenario",
-                hovertemplate="<b>%{text}</b><extra></extra>",
-                text=path,
             ))
 
-    # Node labels — use centroids (not maritime path)
+    # Country node markers — dots + labels only at actual country centroids
     all_path_countries: set[str] = set()
     for r in baseline_routes[:1] + scenario_routes[:1]:
         all_path_countries.update(r.get("path", []))
@@ -283,20 +313,29 @@ def make_multi_criteria_globe(
 
     blocked_countries = [c for cp in blocked_chokepoints
                          for c in CHOKEPOINTS.get(cp, [])]
-    if blocked_countries:
-        b_lats = [_coords(c)[0] for c in blocked_countries if _coords(c)]
-        b_lons = [_coords(c)[1] for c in blocked_countries if _coords(c)]
-        b_names = [c for c in blocked_countries if _coords(c)]
-        fig.add_trace(go.Scattergeo(
-            lat=b_lats, lon=b_lons,
-            mode="markers+text",
-            marker=dict(size=14, symbol="x", color=COLORS["blocked"],
-                        line=dict(width=2, color="white")),
-            text=b_names, textposition="top center",
-            textfont=dict(color="white", size=10),
-            name="Blocked",
-            hovertemplate="%{text}<br><b>BLOCKED</b><extra></extra>",
-        ))
+    if blocked_chokepoints:
+        b_lats, b_lons, b_names = [], [], []
+        for cp in blocked_chokepoints:
+            for wp in CHOKEPOINT_WAYPOINTS.get(cp, []):
+                coord = MARITIME_WAYPOINTS.get(wp)
+                if coord:
+                    b_lats.append(coord[0])
+                    b_lons.append(coord[1])
+                    b_names.append(cp)
+        if b_lats:
+            fig.add_trace(go.Scattergeo(
+                lat=b_lats, lon=b_lons,
+                mode="markers+text",
+                marker=dict(size=14, symbol="x", color=COLORS["blocked"],
+                            line=dict(width=2, color="white")),
+                text=b_names, textposition="top center",
+                textfont=dict(color="white", size=10),
+                name="Blocked",
+                hovertemplate="%{text}<br><b>BLOCKED</b><extra></extra>",
+            ))
+
+    blocked_wps = {wp for cp in blocked_chokepoints
+                   for wp in CHOKEPOINT_WAYPOINTS.get(cp, [])}
 
     all_path_countries: set[str] = set()
     drawn_paths: list[tuple] = []
@@ -313,52 +352,21 @@ def make_multi_criteria_globe(
         offset = sum(0.8 for prev in drawn_paths if prev == path_tuple)
         drawn_paths.append(path_tuple)
 
-        lats, lons = _maritime_lats_lons(path)
+        lats, lons = _maritime_lats_lons(path, blocked_wps)
         lats_off = [lat + offset if lat is not None else None for lat in lats]
-
-        # Hover text: detailed info on origin node only
-        hover_texts = []
-        for j, c in enumerate(path):
-            if j == 0:
-                hover_texts.append(
-                    f"<b>{c}</b><br>"
-                    f"Cost: {route_dict['cost']:.4f}<br>"
-                    f"Lead time: {route_dict['lead_time_days']:.0f} d<br>"
-                    f"Hops: {route_dict['hops']}"
-                )
-            else:
-                hover_texts.append(f"<b>{c}</b>")
-
-        # Waypoints between countries have no hover text — pad with empty strings
-        # We only have country-level hover_texts but lats/lons is longer (includes waypoints).
-        # Build hover text aligned to lats: country nodes get their text, waypoints get "".
-        # Reconstruct which indices correspond to country nodes.
-        country_lats = [(_coords(c) or (None, None))[0] for c in path]
-        full_hover = []
-        ci = 0  # country index
-        tol = 0.01
-        for lat in lats_off:
-            if ci < len(path) and lat is not None and country_lats[ci] is not None:
-                if abs(lat - country_lats[ci] - offset) < tol or abs(lat - offset - (country_lats[ci] or 0)) < tol:
-                    full_hover.append(hover_texts[ci] if ci < len(hover_texts) else "")
-                    ci += 1
-                    continue
-            full_hover.append("")
 
         fig.add_trace(go.Scattergeo(
             lat=lats_off, lon=lons,
-            mode="lines+markers",
+            mode="lines",
             line=dict(width=4, color=color),
-            marker=dict(size=7, color=color, line=dict(width=1, color="white")),
             name=label,
-            text=full_hover,
-            hovertemplate="%{text}<extra></extra>",
+            hoverinfo="skip",
             legendgroup=key,
         ))
 
         all_path_countries.update(path)
 
-    # Country centroid node labels
+    # Country centroid node labels — dots only at actual country nodes
     all_path_countries -= set(blocked_countries)
     node_lats  = [_coords(c)[0] for c in all_path_countries if _coords(c)]
     node_lons  = [_coords(c)[1] for c in all_path_countries if _coords(c)]
@@ -367,9 +375,10 @@ def make_multi_criteria_globe(
         fig.add_trace(go.Scattergeo(
             lat=node_lats, lon=node_lons,
             mode="markers+text",
-            marker=dict(size=6, color="white", opacity=0.5),
+            marker=dict(size=9, color="white",
+                        line=dict(width=1, color="#4A90D9")),
             text=node_names, textposition="top center",
-            textfont=dict(color="rgba(255,255,255,0.6)", size=9),
+            textfont=dict(color="rgba(255,255,255,0.85)", size=9),
             name="Nodes", showlegend=False,
             hovertemplate="<b>%{text}</b><extra></extra>",
         ))

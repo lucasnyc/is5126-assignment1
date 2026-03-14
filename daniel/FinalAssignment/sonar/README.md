@@ -59,7 +59,7 @@ Feature Pipeline (375K rows × 25 features)
 XGBoost Regressor  ──→  Imputed rates for 136K missing corridors
       │
       ▼
-NetworkX DiGraph (30 graphs: 6 years × 5 products)
+NetworkX DiGraph (5 graphs: 2021 × 5 products)
       │
       ▼
 Streamlit Dashboard  ←──  Scenario Engine (chokepoints + tariffs)
@@ -98,7 +98,7 @@ cd sentinel-trade
 # Step 1: Feature engineering + ML training + edge imputation (~2–3 min)
 python src/models/train_xgb.py
 
-# Step 2: Build all 30 NetworkX graph caches (~30 sec)
+# Step 2: Build 5 latest-year NetworkX graphs (~5 sec)
 python src/graph/builder.py
 ```
 
@@ -114,7 +114,7 @@ Expected output from Step 2:
 ```
 (2021, 8517) → 222 nodes,  18,020 edges
 ...
-Graphs cached → data/processed/graphs_cache.pkl
+Graphs cached → data/processed/graphs_latest.pkl
 ```
 
 ### 4. Launch the dashboard
@@ -142,8 +142,7 @@ The primary simulation page.
 |---|---|
 | Origin / Destination | Select any of ~222 countries |
 | Product | One of 5 HS product codes |
-| Year | 2016–2021 |
-| Chokepoint toggles | Block Suez, Panama, Hormuz, Malacca, or Bab el-Mandeb |
+| Chokepoint toggles | Block Suez Canal, Panama Canal, Strait of Hormuz, or Strait of Malacca |
 | Tariff sliders | Apply % tariffs to US, EU, China, or ASEAN trade |
 | Routes to display | Show top 1 or top 3 alternatives |
 
@@ -198,15 +197,15 @@ Run these 5 scenarios in sequence for a compelling industry pitch:
 The RS is a novel composite 0–100 index integrating four risk dimensions:
 
 ```
-RS = 100 × (0.35 × Alt + 0.25 × Bil + 0.25 × Chk + 0.15 × Fleet)
+RS = 100 × (0.47 × Alt + 0.28 × Chk + 0.17 × Bil + 0.07 × Fleet)
 ```
 
 | Component | Weight | Definition |
 |---|---|---|
-| **Alt** | 35% | Alternative path redundancy: `max(0, 1 − premium/2)` where premium = (cost_k2 − cost_k1)/cost_k1. Zero alternatives → Alt = 0. |
-| **Bil** | 25% | Bilateral LSCI quality along route edges, normalised by 95th-percentile. |
-| **Chk** | 25% | Chokepoint avoidance: `1 − (chokepoint countries on path / 10 total)` |
-| **Fleet** | 15% | Average merchant fleet % of transit nations, normalised by global median. |
+| **Alt** | 47% | Alternative path redundancy: `max(0, 1 − premium)` where premium = (cost_k2 − cost_k1)/cost_k1. Zero alternatives → Alt = 0. |
+| **Chk** | 28% | Chokepoint avoidance: `1 − (chokepoint countries on path / 7 total)` |
+| **Bil** | 17% | Bilateral LSCI quality along route edges, normalised by 95th-percentile. |
+| **Fleet** | 7% | Average merchant fleet % of transit nations, normalised by global median. |
 
 Sensitivity analysis (±10% weight perturbation) confirms score orderings are stable within ±5 points.
 
@@ -248,7 +247,6 @@ The imputation task predicts freight rates for routes that have never been obser
 | Panama Canal | Panama | US East Coast ↔ Asia |
 | Strait of Hormuz | Iran, Oman | Global energy / Gulf exports |
 | Strait of Malacca | Singapore, Malaysia, Indonesia | South China Sea → Indian Ocean |
-| Bab el-Mandeb | Yemen, Djibouti | Red Sea → Suez entry |
 
 ---
 
@@ -274,7 +272,7 @@ sentinel-trade/
 │   └── processed/
 │       ├── features_long.parquet   # 375K rows × 31 cols (generated)
 │       ├── graph_edges_full.parquet# Complete edge matrix with ML imputations (generated)
-│       ├── graphs_cache.pkl        # 30 pre-built NetworkX graphs (generated)
+│       ├── graphs_latest.pkl       # 5 pre-built NetworkX graphs for 2021 (generated)
 │       └── model_artifacts/
 │           ├── xgb_model.json      # Trained XGBoost model
 │           ├── shap_explainer.pkl  # Feature importance data

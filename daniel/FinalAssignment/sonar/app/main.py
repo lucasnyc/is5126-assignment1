@@ -3,7 +3,7 @@ SONAR — Supply-chain Optimization and Network Analysis for Resilience.
 Streamlit entry point.
 
 Run with:
-    cd sentinel-trade
+    cd sonar
     streamlit run app/main.py
 """
 
@@ -76,6 +76,43 @@ def _load_scorer():
     return ResilienceScorer()
 
 
+@st.cache_resource(show_spinner="Pre-computing resilience baseline...")
+def _compute_heatmap_baseline():
+    """
+    Compute baseline resilience scores for all TOP_CORRIDORS × PRODUCT_CODES.
+    Cached at process level — survives page refreshes and new sessions.
+    Only re-runs if the Streamlit server restarts.
+    """
+    graphs = _load_graphs()
+    scorer = _load_scorer()
+    rows   = []
+    for orig, dest in TOP_CORRIDORS:
+        for prod in PRODUCT_CODES:
+            gkey = (LATEST_YEAR, prod)
+            if gkey not in graphs:
+                continue
+            G = graphs[gkey]
+            try:
+                routes = find_k_routes(G, orig, dest, k=3)
+                rs     = scorer.score_from_routes(routes, G)
+                rows.append({
+                    "origin":       orig,
+                    "destination":  dest,
+                    "product_name": PRODUCT_NAMES[prod],
+                    "score":        rs["score"],
+                    "label":        rs["label"],
+                })
+            except (nx.NetworkXNoPath, nx.NodeNotFound):
+                rows.append({
+                    "origin":       orig,
+                    "destination":  dest,
+                    "product_name": PRODUCT_NAMES[prod],
+                    "score":        0.0,
+                    "label":        "No Route",
+                })
+    return rows
+
+
 # ── Bootstrap session state ───────────────────────────────────────────────────
 if "graphs" not in st.session_state:
     st.session_state.graphs = _load_graphs()
@@ -84,38 +121,10 @@ if "edges" not in st.session_state:
 if "scorer" not in st.session_state:
     st.session_state.scorer = _load_scorer()
 
-# ── Pre-compute heatmap baseline (no scenario, all products, all 20 corridors) ─
-# This runs once at startup so page 02 loads instantly for the default view.
+# Baseline is process-cached; reading into session_state is a zero-cost dict lookup
+# on every refresh after the first computation.
 if "heatmap_baseline" not in st.session_state:
-    _graphs  = st.session_state.graphs
-    _scorer  = st.session_state.scorer
-    _rows    = []
-    with st.spinner("Pre-computing resilience baseline..."):
-        for orig, dest in TOP_CORRIDORS:
-            for prod in PRODUCT_CODES:
-                gkey = (LATEST_YEAR, prod)
-                if gkey not in _graphs:
-                    continue
-                G = _graphs[gkey]
-                try:
-                    routes = find_k_routes(G, orig, dest, k=3)
-                    rs     = _scorer.score_from_routes(routes, G)
-                    _rows.append({
-                        "origin":       orig,
-                        "destination":  dest,
-                        "product_name": PRODUCT_NAMES[prod],
-                        "score":        rs["score"],
-                        "label":        rs["label"],
-                    })
-                except (nx.NetworkXNoPath, nx.NodeNotFound):
-                    _rows.append({
-                        "origin":       orig,
-                        "destination":  dest,
-                        "product_name": PRODUCT_NAMES[prod],
-                        "score":        0.0,
-                        "label":        "No Route",
-                    })
-    st.session_state.heatmap_baseline = _rows
+    st.session_state.heatmap_baseline = _compute_heatmap_baseline()
 
 # ── Header ────────────────────────────────────────────────────────────────────
 col_logo, col_tagline = st.columns([1, 3])

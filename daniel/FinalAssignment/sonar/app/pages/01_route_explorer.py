@@ -16,7 +16,7 @@ import networkx as nx
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
 sys.path.insert(0, ROOT)
 
-from config import CHOKEPOINTS, PRODUCT_NAMES, LATEST_YEAR
+from config import CHOKEPOINTS, CHOKEPOINT_WAYPOINTS, PRODUCT_NAMES, LATEST_YEAR
 from src.graph.routing import find_multi_criteria_routes, apply_scenario
 from src.graph.chokepoints import get_tariff_multipliers
 from src.viz.globe import make_multi_criteria_globe, make_resilience_gauge, CRITERIA_COLORS
@@ -102,14 +102,16 @@ tariff_multipliers = get_tariff_multipliers(
 )
 G_active = apply_scenario(G_base, blocked, tariff_multipliers) if has_scenario else G_base
 
-all_lsci   = [G_base.nodes[n].get("lsci", 0) for n in G_base.nodes()]
+all_lsci    = [G_base.nodes[n].get("lsci", 0) for n in G_base.nodes()]
 median_lsci = float(pd.Series(all_lsci).replace(0, pd.NA).median() or 50.0)
+blocked_wps = frozenset(wp for cp in blocked for wp in CHOKEPOINT_WAYPOINTS.get(cp, []))
 
 # ── Compute multi-criteria routes ─────────────────────────────────────────────
 try:
     routes = find_multi_criteria_routes(
         G_active, origin, destination, scorer,
         k_candidates=20, median_lsci=median_lsci,
+        blocked_wps=blocked_wps,
     )
 except nx.NodeNotFound as e:
     st.error(f"Node error: {e}")

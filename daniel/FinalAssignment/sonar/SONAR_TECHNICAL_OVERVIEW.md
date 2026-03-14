@@ -32,7 +32,7 @@ Feature Engineering  (7 datasets merged, 25 features)
       ↓
 XGBoost Imputation   (fills in unobserved freight rates)
       ↓
-Graph Construction   (30 directed weighted graphs: 6 years × 5 products)
+Graph Construction   (5 directed weighted graphs: 2021 × 5 products)
       ↓
 Routing + Scoring    (Yen's K-shortest + AHP Resilience Score)
       ↓
@@ -208,7 +208,7 @@ After training, the model predicts all missing freight rates and concatenates th
 
 ### 5.1 Graph Structure
 
-From `graph_edges_full.parquet`, **30 directed weighted graphs** are built — one for each `(year, product_code)` combination (6 years × 5 products).
+From `graph_edges_full.parquet`, **5 directed weighted graphs** are built — one per product code for `LATEST_YEAR` (2021). Historical years are available for model training but only the most recent year is used for dashboard routing and scoring.
 
 Each graph is a `NetworkX DiGraph` where:
 
@@ -230,7 +230,7 @@ Each graph is a `NetworkX DiGraph` where:
 
 ### 5.3 Caching
 
-All 30 graphs are serialised to `graphs_cache.pkl` after the first build. The Streamlit app loads from cache on startup (~2 seconds), avoiding graph reconstruction on every session.
+All 5 graphs are serialised to `graphs_latest.pkl` after the first build. The Streamlit app loads from cache on startup (~1 second), avoiding graph reconstruction on every session. At startup, resilience scores are pre-computed for all top corridors and stored in `session_state.heatmap_baseline` so the Resilience Analysis page loads instantly.
 
 ---
 
@@ -358,7 +358,7 @@ Chk = 1 - chokepoint_exposure(path)
 chokepoint_exposure = |intermediate nodes ∩ chokepoint countries| / |all chokepoint countries|
 ```
 
-Chokepoint countries: Egypt, Panama, Iran, Oman, Singapore, Malaysia, Indonesia, Yemen, Djibouti (10 total). A route transiting none of these scores Chk = 1.0; a route through Singapore scores lower.
+Chokepoint countries: Egypt, Panama, Iran, Oman, Singapore, Malaysia, Indonesia (7 total). A route transiting none of these scores Chk = 1.0; a route through Singapore scores lower.
 
 **Bil — Bilateral Connectivity (weight: 0.17)**
 
@@ -418,13 +418,12 @@ Scenario simulation modifies a copy of the base graph in real-time. The original
 
 Blocking a chokepoint removes its associated country nodes from the graph:
 
-| Chokepoint | Countries Removed |
-|---|---|
-| Suez Canal | Egypt |
-| Panama Canal | Panama |
-| Strait of Hormuz | Iran, Oman |
-| Strait of Malacca | Singapore, Malaysia, Indonesia |
-| Bab el-Mandeb | Yemen, Djibouti |
+| Chokepoint | Countries Removed | Map Marker Location |
+|---|---|---|
+| Suez Canal | Egypt | Suez Canal waypoints (29.9°N, 31.3°N) |
+| Panama Canal | Panama | Panama Canal waypoints (9.4°N Atlantic / 8.9°N Pacific) |
+| Strait of Hormuz | Iran, Oman | Strait of Hormuz (26.5°N, 56.5°E) |
+| Strait of Malacca | Singapore, Malaysia, Indonesia | Strait of Malacca (1.5°N, 103.5°E) |
 
 When a node is removed, all edges passing through it vanish. Routes that previously transited Singapore, for example, must now find alternatives — or fail entirely if none exist within the hop limit.
 
@@ -476,7 +475,7 @@ The Streamlit app has three pages accessible from the sidebar.
   - 🟢 Green = Most Resilient route
   - 🔵 Blue = Cheapest route
   - 🟠 Orange = Fastest route
-  - Blocked chokepoint countries marked with ✕
+  - Blocked chokepoints marked with ✕ at the actual strait/canal coordinates (not country centroids)
 
 - **3-column route cards** — one per criterion, each showing:
   - The highlighted metric (RS score / cost / lead time)
@@ -570,7 +569,7 @@ sentinel-trade/
 │   │   ├── train_xgb.py                 # XGBoost training + imputation
 │   │   └── predictor.py                 # Inference + per-edge explanation
 │   ├── graph/
-│   │   ├── builder.py                   # Graph construction (30 DiGraphs)
+│   │   ├── builder.py                   # Graph construction (5 DiGraphs, 2021)
 │   │   ├── routing.py                   # Yen's K-shortest + multi-criteria selection
 │   │   └── chokepoints.py               # Chokepoint node removal + tariff multipliers
 │   ├── scoring/
@@ -582,7 +581,7 @@ sentinel-trade/
 │   └── processed/
 │       ├── features_long.parquet        # Engineered feature table
 │       ├── graph_edges_full.parquet     # Complete edge matrix (observed + imputed)
-│       ├── graphs_cache.pkl             # 30 serialised NetworkX DiGraphs
+│       ├── graphs_latest.pkl            # 5 serialised NetworkX DiGraphs (2021)
 │       └── model_artifacts/
 │           ├── xgb_model.json           # Trained XGBoost model
 │           ├── shap_explainer.pkl       # Feature importance dict

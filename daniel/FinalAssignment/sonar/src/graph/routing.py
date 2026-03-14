@@ -2,6 +2,7 @@
 Routing engine — Dijkstra + Yen's K-shortest paths with scenario simulation.
 """
 
+import functools
 import itertools
 import math
 import sys
@@ -11,7 +12,10 @@ from typing import Optional
 import networkx as nx
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-from config import K_ROUTES, MAX_HOPS, MAX_HOPS_FALLBACK, COUNTRY_COORDS
+from config import (
+    K_ROUTES, MAX_HOPS, MAX_HOPS_FALLBACK, COUNTRY_COORDS,
+    MARITIME_WAYPOINTS, MARITIME_EDGES, COUNTRY_PORT_WAYPOINT, CHOKEPOINT_WAYPOINTS,
+)
 from src.graph.chokepoints import get_countries_to_remove, chokepoint_exposure
 
 # Average container ship speed: 15 knots = 27.78 km/h = 666.7 km/day
@@ -30,6 +34,146 @@ _MAX_DETOUR_RATIO = 3.0
 # while excluding minor island states (Bahamas=74, Jamaica=95) and landlocked
 # countries (Bolivia=0, Serbia=0) that are not real transshipment centres.
 _MIN_HUB_LSCI = 100.0
+
+
+# ─── Maritime graph utilities ─────────────────────────────────────────────────
+
+@functools.lru_cache(maxsize=16)
+def _get_maritime_graph(blocked_wps: frozenset = frozenset()) -> nx.Graph:
+    """
+    Build (and cache) a maritime waypoint graph, optionally with waypoints
+    removed for chokepoint scenarios.  The base graph (no blockings) is built
+    once and reused; each unique blocked_wps combination is cached separately.
+    """
+    MG = nx.Graph()
+    for node in MARITIME_WAYPOINTS:
+        MG.add_node(node)
+    for u, v in MARITIME_EDGES:
+        cu, cv = MARITIME_WAYPOINTS[u], MARITIME_WAYPOINTS[v]
+        dist = _haversine_km_raw(cu[0], cu[1], cv[0], cv[1])
+        MG.add_edge(u, v, weight=dist)
+    for wp in blocked_wps:
+        if MG.has_node(wp):
+            MG.remove_node(wp)
+    return MG
+
+
+def _country_waypoint(country: str) -> str | None:
+    """Return maritime entry waypoint key for a country."""
+    if country in COUNTRY_PORT_WAYPOINT:
+        return COUNTRY_PORT_WAYPOINT[country]
+    coord = COUNTRY_COORDS.get(country)
+    if not coord:
+        return None
+    return min(
+        MARITIME_WAYPOINTS.items(),
+        key=lambda kv: _haversine_km_raw(coord[0], coord[1], kv[1][0], kv[1][1]),
+    )[0]
+
+
+def _maritime_leg_km(u: str, v: str, blocked_wps: frozenset = frozenset()) -> float:
+    """
+    Realistic maritime sailing distance in km for a trade leg u→v.
+
+    Uses the waypoint graph (Dijkstra) rather than a direct haversine that
+    would cut straight across land masses.  If a chokepoint is blocked,
+    passes ``blocked_wps`` to force the path around the closure.
+    Falls back to direct haversine when country waypoints are unknown.
+    """
+    MG = _get_maritime_graph(blocked_wps)
+    wp_u = _country_waypoint(u)
+    wp_v = _country_waypoint(v)
+
+    if not wp_u or not wp_v:
+        cu, cv = COUNTRY_COORDS.get(u), COUNTRY_COORDS.get(v)
+        return _haversine_km_raw(cu[0], cu[1], cv[0], cv[1]) if cu and cv else 5_000.0
+
+    try:
+        wp_dist = nx.shortest_path_length(MG, wp_u, wp_v, weight="weight")
+        # Add legs: country centroid → port waypoint on each end
+        cu = COUNTRY_COORDS.get(u)
+        cv = COUNTRY_COORDS.get(v)
+        cwp_u = MARITIME_WAYPOINTS[wp_u]
+        cwp_v = MARITIME_WAYPOINTS[wp_v]
+        if cu:
+            wp_dist += _haversine_km_raw(cu[0], cu[1], cwp_u[0], cwp_u[1])
+        if cv:
+            wp_dist += _haversine_km_raw(cv[0], cv[1], cwp_v[0], cwp_v[1])
+        return wp_dist
+    except (nx.NetworkXNoPath, nx.NodeNotFound):
+        return 40_000.0   # chokepoint makes route impossible → very long distance
+
+
+def _apply_detour_penalty(H: nx.DiGraph, blocked_chokepoints: list[str]) -> None:
+    """
+    Reprice every edge whose normal maritime path crosses a blocked chokepoint.
+
+    ML-imputation creates direct edges between distant country pairs (e.g.
+    China→Germany) that never explicitly pass through Egypt.  Removing Egypt
+    alone doesn't raise their cost.  This function detects that the maritime
+    path for such an edge would normally transit the blocked waypoints and
+    multiplies the edge weight by the detour ratio
+    (alternative_distance / normal_distance).
+
+    Example: Suez blocked → China→Germany edge ×1.35 (Cape route is 35% longer).
+    Modifies H in-place.
+    """
+    blocked_wps = frozenset(
+        wp for cp in blocked_chokepoints
+        for wp in CHOKEPOINT_WAYPOINTS.get(cp, [])
+    )
+    if not blocked_wps:
+        return
+
+    MG_normal  = _get_maritime_graph(frozenset())
+    MG_blocked = _get_maritime_graph(blocked_wps)
+
+    # Cache detour ratios per (wp_u, wp_v) pair — only ~34 waypoints, cheap
+    _ratio_cache: dict[tuple, float] = {}
+
+    def _ratio(wp_u: str, wp_v: str) -> float:
+        key = (min(wp_u, wp_v), max(wp_u, wp_v))
+        if key in _ratio_cache:
+            return _ratio_cache[key]
+        try:
+            normal_path = nx.shortest_path(MG_normal, wp_u, wp_v, weight="weight")
+        except (nx.NetworkXNoPath, nx.NodeNotFound):
+            _ratio_cache[key] = 1.0
+            return 1.0
+        # Only reprice if the normal path goes through a blocked waypoint
+        if not any(wp in blocked_wps for wp in normal_path):
+            _ratio_cache[key] = 1.0
+            return 1.0
+        try:
+            nd = nx.shortest_path_length(MG_normal,  wp_u, wp_v, weight="weight")
+            dd = nx.shortest_path_length(MG_blocked, wp_u, wp_v, weight="weight")
+            r = dd / max(nd, 1.0)
+        except (nx.NetworkXNoPath, nx.NodeNotFound):
+            r = 2.5   # can't route at all → heavy penalty
+        _ratio_cache[key] = r
+        return r
+
+    for u, v in list(H.edges()):
+        wp_u = _country_waypoint(u)
+        wp_v = _country_waypoint(v)
+        if not wp_u or not wp_v or wp_u == wp_v:
+            continue
+        r = _ratio(wp_u, wp_v)
+        if r > 1.001:
+            H[u][v]["weight"] = H[u][v]["weight"] * r
+
+
+# ─── Haversine (private name used before class definitions) ───────────────────
+
+def _haversine_km_raw(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance in km (used by maritime utilities above)."""
+    R = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = (math.sin(dlat / 2) ** 2
+         + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2))
+         * math.sin(dlon / 2) ** 2)
+    return 2 * R * math.asin(math.sqrt(a))
 
 
 def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -84,35 +228,35 @@ class Route:
     """Represents a single route result."""
 
     def __init__(self, path: list[str], cost: float, graph: nx.DiGraph,
-                 median_lsci: float = 50.0):
-        self.path          = path
-        self.cost          = cost
-        self.hops          = len(path) - 1
-        self.chk_exposure  = chokepoint_exposure(path)
+                 median_lsci: float = 50.0,
+                 blocked_wps: frozenset = frozenset()):
+        self.path           = path
+        self.cost           = cost
+        self.hops           = len(path) - 1
+        self.chk_exposure   = chokepoint_exposure(path)
+        self._blocked_wps   = blocked_wps
         self.lead_time_days = self._estimate_lead_time(graph, median_lsci)
-        self.has_predicted = self._check_predicted(graph)
+        self.has_predicted  = self._check_predicted(graph)
 
     def _estimate_lead_time(self, G: nx.DiGraph, median_lsci: float) -> float:
         """
-        Lead time = (total haversine distance / avg ship speed) + port handling.
+        Lead time = (total maritime sailing distance / avg ship speed) + port handling.
 
         Methodology
         -----------
-        - Great-circle distance between each consecutive pair of countries
-          using their geographic centroids (COUNTRY_COORDS).
+        - Maritime waypoint graph distance for each leg, routing through actual
+          sea lanes (straits, canals, ocean crossings) rather than great-circle
+          haversine which cuts across land masses.
+        - When a chokepoint is blocked, the maritime graph is adjusted so the
+          distance reflects the detour (e.g. Cape of Good Hope when Suez is
+          blocked), giving a physically accurate lead time.
         - Average container ship speed: 15 knots ≈ 667 km/day.
         - Port handling: 0.75 days per intermediate stop.
-        - Falls back to 5 days/hop when coordinates are missing.
         """
         days = 0.0
         for u, v in zip(self.path[:-1], self.path[1:]):
-            c_u = COUNTRY_COORDS.get(u)
-            c_v = COUNTRY_COORDS.get(v)
-            if c_u and c_v:
-                dist_km = _haversine_km(c_u[0], c_u[1], c_v[0], c_v[1])
-                days += dist_km / _SHIP_SPEED_KM_PER_DAY
-            else:
-                days += 5.0  # fallback if coords unknown
+            dist_km = _maritime_leg_km(u, v, self._blocked_wps)
+            days += dist_km / _SHIP_SPEED_KM_PER_DAY
         # Add port handling for every stop except the final destination
         intermediate_stops = max(0, len(self.path) - 2)
         days += intermediate_stops * _PORT_DAYS_PER_STOP
@@ -159,6 +303,11 @@ def apply_scenario(
         for country in to_remove:
             if country in H:
                 H.remove_node(country)
+        # Reprice all edges whose maritime path crosses the blocked chokepoint.
+        # This ensures ML-predicted direct edges (e.g. China→Germany) correctly
+        # reflect the detour cost — the router can no longer "ignore" Suez by
+        # using a straight imputed edge that doesn't pass through Egypt.
+        _apply_detour_penalty(H, blocked_chokepoints)
 
     # Apply tariff multipliers to edge weights
     if tariff_multipliers:
@@ -181,6 +330,7 @@ def find_k_routes(
     k: int = K_ROUTES,
     cutoff: int = MAX_HOPS,
     median_lsci: float = 50.0,
+    blocked_wps: frozenset = frozenset(),
 ) -> list[Route]:
     """
     Find top-k shortest paths (by freight cost) using Yen's algorithm.
@@ -259,7 +409,7 @@ def find_k_routes(
                 G[u][v]["weight"] for u, v in zip(path[:-1], path[1:])
                 if G.has_edge(u, v)
             )
-            found.append(Route(path, cost, G, median_lsci))
+            found.append(Route(path, cost, G, median_lsci, blocked_wps))
             if len(found) == k:
                 break
         return found
@@ -268,7 +418,7 @@ def find_k_routes(
     routes: list[Route] = []
     if G_hubs.has_edge(source, target):
         cost = G[source][target]["weight"] if G.has_edge(source, target) else 0.0
-        routes.append(Route([source, target], cost, G, median_lsci))
+        routes.append(Route([source, target], cost, G, median_lsci, blocked_wps))
 
     # Phase 2 – Single hub (≤2 hops), geo-filtered, hub subgraph
     if len(routes) < k:
@@ -323,6 +473,7 @@ def find_multi_criteria_routes(
     k_candidates: int = 20,
     cutoff: int = MAX_HOPS,
     median_lsci: float = 50.0,
+    blocked_wps: frozenset = frozenset(),
 ) -> dict:
     """
     Find the best route for each of 3 criteria from a candidate pool.
@@ -336,7 +487,8 @@ def find_multi_criteria_routes(
     Each value is a Route object with an extra ``rs`` attribute (float).
     """
     candidates = find_k_routes(
-        G, source, target, k=k_candidates, cutoff=cutoff, median_lsci=median_lsci
+        G, source, target, k=k_candidates, cutoff=cutoff,
+        median_lsci=median_lsci, blocked_wps=blocked_wps,
     )
 
     # Score every candidate; use the next-cheapest as the k2 comparator
