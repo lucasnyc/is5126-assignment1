@@ -1,6 +1,9 @@
 """
 Resilience Analysis page.
 Shows resilience score heatmap across top trade corridors and component breakdown.
+
+Default view (no scenario) uses the baseline pre-computed at startup — instant load.
+Scenario changes trigger a focused recompute via @st.cache_data.
 """
 
 import os
@@ -14,7 +17,7 @@ import networkx as nx
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
 sys.path.insert(0, ROOT)
 
-from config import PRODUCT_NAMES, PRODUCT_CODES, YEARS, CHOKEPOINTS
+from config import PRODUCT_NAMES, PRODUCT_CODES, LATEST_YEAR, CHOKEPOINTS, TOP_CORRIDORS
 from src.graph.routing import find_k_routes, apply_scenario
 from src.graph.chokepoints import get_tariff_multipliers
 from src.viz.globe import make_corridor_heatmap, COLORS
@@ -32,17 +35,17 @@ if "graphs" not in st.session_state:
 
 graphs  = st.session_state.graphs
 scorer  = st.session_state.scorer
+year    = LATEST_YEAR
 
 # ─── Sidebar controls ─────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## 📊 Resilience Analysis")
-    year = st.selectbox("Year", YEARS, index=YEARS.index(2021))
     selected_products = st.multiselect(
         "Products",
         options=list(PRODUCT_NAMES.values()),
         default=list(PRODUCT_NAMES.values()),
     )
-    n_corridors = st.slider("Top N corridors", 10, 50, 20)
+    n_corridors = st.slider("Top N corridors", 10, len(TOP_CORRIDORS), 20)
     st.markdown("---")
     st.markdown("### Scenario (optional)")
     blocked = []
@@ -52,40 +55,22 @@ with st.sidebar:
     us_t = st.slider("US Tariff (%)", 0, 50, 0, step=5, key="rs_us")
     eu_t = st.slider("EU Tariff (%)", 0, 50, 0, step=5, key="rs_eu")
     cn_t = st.slider("China Tariff (%)", 0, 50, 0, step=5, key="rs_cn")
-    compute_btn = st.button("Compute Heatmap", type="primary", use_container_width=True)
+    st.caption("Scores update automatically when inputs change.")
 
 st.markdown("# 📊 Resilience Analysis")
 st.caption("Compare route resilience across the top global trade corridors.")
 
-# ─── Compute heatmap ─────────────────────────────────────────────────────────
-# Pre-defined top corridors (by seaborne trade importance)
-TOP_CORRIDORS = [
-    ("China", "United States"),
-    ("China", "Germany"),
-    ("China", "United Kingdom"),
-    ("China", "Japan"),
-    ("China", "Republic of Korea"),
-    ("China", "Australia"),
-    ("China", "India"),
-    ("Japan", "United States"),
-    ("Republic of Korea", "United States"),
-    ("Germany", "United States"),
-    ("India", "United States"),
-    ("India", "Germany"),
-    ("United States", "Germany"),
-    ("United States", "Japan"),
-    ("Brazil", "China"),
-    ("Brazil", "United States"),
-    ("Australia", "China"),
-    ("Singapore", "United States"),
-    ("United Arab Emirates", "India"),
-    ("Saudi Arabia", "China"),
-][:n_corridors]
+# ─── Resolve active corridor / product slice ──────────────────────────────────
+active_corridors = TOP_CORRIDORS[:n_corridors]
+selected_codes   = [k for k, v in PRODUCT_NAMES.items() if v in selected_products]
+has_scenario     = bool(blocked) or any([us_t, eu_t, cn_t])
 
-selected_codes = [k for k, v in PRODUCT_NAMES.items() if v in selected_products]
+# ─── Fetch heatmap data ───────────────────────────────────────────────────────
+# Baseline (no scenario): read from pre-computed session_state cache — instant.
+# Scenario active: run focused recompute (only affected corridors/products).
 
-@st.cache_data(show_spinner="Computing resilience scores...")
-def compute_heatmap_data(
+@st.cache_data(show_spinner="Computing scenario scores...")
+def compute_scenario_data(
     corridors: list, product_codes: list, year: int,
     blocked_cps: tuple, us_t: int, eu_t: int, cn_t: int
 ) -> list[dict]:
@@ -93,11 +78,10 @@ def compute_heatmap_data(
     rows = []
     for orig, dest in corridors:
         for prod in product_codes:
-            key = (year, prod)
-            if key not in graphs:
+            gkey = (year, prod)
+            if gkey not in graphs:
                 continue
-            G_base = graphs[key]
-            G = apply_scenario(G_base, list(blocked_cps), tariff_mult)
+            G = apply_scenario(graphs[gkey], list(blocked_cps), tariff_mult)
             try:
                 routes = find_k_routes(G, orig, dest, k=3)
                 rs = scorer.score_from_routes(routes, G)
@@ -118,10 +102,19 @@ def compute_heatmap_data(
                 })
     return rows
 
-with st.spinner("Computing resilience scores for selected corridors..."):
-    data = compute_heatmap_data(
-        TOP_CORRIDORS, selected_codes, year,
-        tuple(sorted(blocked)), us_t, eu_t, cn_t
+
+if not has_scenario and "heatmap_baseline" in st.session_state:
+    # Slice the pre-computed full baseline to the user's current selection
+    top_set = {(o, d) for o, d in active_corridors}
+    data = [
+        r for r in st.session_state.heatmap_baseline
+        if (r["origin"], r["destination"]) in top_set
+        and r["product_name"] in selected_products
+    ]
+else:
+    data = compute_scenario_data(
+        active_corridors, selected_codes, year,
+        tuple(sorted(blocked)), us_t, eu_t, cn_t,
     )
 
 if not data:
@@ -165,21 +158,20 @@ st.dataframe(
 st.markdown("### Drill Down: Score Components")
 chosen_corridor = st.selectbox(
     "Select corridor to analyze",
-    [f"{o} → {d}" for o, d in TOP_CORRIDORS]
+    [f"{o} → {d}" for o, d in active_corridors]
 )
-chosen_product = st.selectbox("Product", list(PRODUCT_NAMES.values()), key="dd_prod")
+chosen_product   = st.selectbox("Product", list(PRODUCT_NAMES.values()), key="dd_prod")
 chosen_prod_code = [k for k, v in PRODUCT_NAMES.items() if v == chosen_product][0]
 
 orig_c, dest_c = chosen_corridor.split(" → ", 1)
-key = (year, chosen_prod_code)
-if key in graphs:
-    G_b = graphs[key]
+gkey = (year, chosen_prod_code)
+if gkey in graphs:
     tariff_mult = get_tariff_multipliers(float(us_t), float(eu_t), float(cn_t), 0.0)
-    G_s = apply_scenario(G_b, blocked, tariff_mult)
+    G_s = apply_scenario(graphs[gkey], blocked, tariff_mult)
     try:
         routes = find_k_routes(G_s, orig_c, dest_c, k=3)
-        rs = scorer.score_from_routes(routes, G_s)
-        comp = rs["components_pct"]
+        rs     = scorer.score_from_routes(routes, G_s)
+        comp   = rs["components_pct"]
 
         fig_bar = go.Figure(go.Bar(
             x=list(comp.keys()),
@@ -191,11 +183,11 @@ if key in graphs:
         ))
         fig_bar.update_layout(
             title=f"RS Components: {chosen_corridor} ({chosen_product})",
-            yaxis_title="Contribution (pts, max=35/25/25/15)",
+            yaxis_title="Contribution (pts, max=47/28/17/7)",
             paper_bgcolor=COLORS["paper"],
             plot_bgcolor=COLORS["paper"],
             font=dict(color="white"),
-            yaxis=dict(range=[0, 40], gridcolor="#21262d"),
+            yaxis=dict(range=[0, 52], gridcolor="#21262d"),
             xaxis=dict(gridcolor="#21262d"),
             height=350,
         )

@@ -1,7 +1,9 @@
 """
 NetworkX graph builder.
 Constructs a directed weighted graph from the complete edge matrix.
-One graph per (year, product_code) combination — 30 graphs total.
+
+Primary path: 5 graphs (one per product, latest year only) for the dashboard.
+Legacy path: build_all_graphs() for notebooks / full historical analysis.
 """
 
 import os
@@ -13,13 +15,14 @@ import networkx as nx
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from config import (
-    EDGES_PATH, YEARS, PRODUCT_CODES, PROCESSED_DIR,
+    EDGES_PATH, YEARS, LATEST_YEAR, PRODUCT_CODES, PROCESSED_DIR,
     COUNTRY_COORDS
 )
 from src.data.loaders import load_country_lsci, load_merchant_fleet
 
 
-GRAPHS_CACHE_PATH = os.path.join(PROCESSED_DIR, "graphs_cache.pkl")
+GRAPHS_CACHE_PATH        = os.path.join(PROCESSED_DIR, "graphs_cache.pkl")
+LATEST_GRAPHS_CACHE_PATH = os.path.join(PROCESSED_DIR, "graphs_latest.pkl")
 
 
 def _load_node_attributes() -> dict[str, dict]:
@@ -110,13 +113,61 @@ def build_graph(
     return G
 
 
+def build_latest_graphs(
+    edges_df: pd.DataFrame | None = None,
+    save_cache: bool = True,
+) -> dict[tuple[int, int], nx.DiGraph]:
+    """
+    Build 5 graphs — one per product for LATEST_YEAR only.
+    This is the primary path used by the Streamlit dashboard.
+
+    Returns dict keyed by (LATEST_YEAR, product_code).
+    """
+    if edges_df is None:
+        if not os.path.exists(EDGES_PATH):
+            raise FileNotFoundError(
+                f"Edge matrix not found at {EDGES_PATH}. "
+                "Run src/models/train_xgb.py first."
+            )
+        edges_df = pd.read_parquet(EDGES_PATH)
+
+    print(f"Building node attribute lookup (year={LATEST_YEAR})...")
+    node_attrs = _load_node_attributes()
+
+    graphs = {}
+    for prod in PRODUCT_CODES:
+        G = build_graph(edges_df, LATEST_YEAR, prod, node_attrs=node_attrs)
+        graphs[(LATEST_YEAR, prod)] = G
+        print(f"  ({LATEST_YEAR}, {prod:4d}) → {G.number_of_nodes():3d} nodes, "
+              f"{G.number_of_edges():6d} edges")
+
+    if save_cache:
+        os.makedirs(PROCESSED_DIR, exist_ok=True)
+        with open(LATEST_GRAPHS_CACHE_PATH, "wb") as f:
+            pickle.dump(graphs, f)
+        print(f"Latest graphs cached → {LATEST_GRAPHS_CACHE_PATH}")
+
+    return graphs
+
+
+def load_latest_graphs_cache() -> dict[tuple[int, int], nx.DiGraph]:
+    """Load pre-built latest-year graph cache (5 graphs) from disk."""
+    if not os.path.exists(LATEST_GRAPHS_CACHE_PATH):
+        raise FileNotFoundError(
+            f"Latest graph cache not found at {LATEST_GRAPHS_CACHE_PATH}. "
+            "Run build_latest_graphs() first."
+        )
+    with open(LATEST_GRAPHS_CACHE_PATH, "rb") as f:
+        return pickle.load(f)
+
+
 def build_all_graphs(
     edges_df: pd.DataFrame | None = None,
     save_cache: bool = True,
 ) -> dict[tuple[int, int], nx.DiGraph]:
     """
     Build all 30 graphs (6 years × 5 products).
-    Optionally serializes to disk for fast Streamlit startup.
+    Used by historical notebooks. Dashboard uses build_latest_graphs() instead.
 
     Returns dict keyed by (year, product_code).
     """
@@ -149,7 +200,7 @@ def build_all_graphs(
 
 
 def load_graphs_cache() -> dict[tuple[int, int], nx.DiGraph]:
-    """Load pre-built graph cache from disk."""
+    """Load pre-built full graph cache from disk (30 graphs)."""
     if not os.path.exists(GRAPHS_CACHE_PATH):
         raise FileNotFoundError(
             f"Graph cache not found at {GRAPHS_CACHE_PATH}. "
@@ -160,4 +211,4 @@ def load_graphs_cache() -> dict[tuple[int, int], nx.DiGraph]:
 
 
 if __name__ == "__main__":
-    build_all_graphs(save_cache=True)
+    build_latest_graphs(save_cache=True)

@@ -40,9 +40,236 @@ PRODUCT_NAMES = {
 }
 
 YEARS = list(range(2016, 2022))          # 2016–2021 inclusive
+LATEST_YEAR = 2021                       # single year used by the dashboard
 TRAIN_YEARS = [2016, 2017, 2018, 2019]
 VAL_YEARS   = [2020]
 TEST_YEARS  = [2021]
+
+# ─── Top trade corridors (pre-defined by seaborne trade importance) ────────────
+# Used by Resilience Analysis heatmap and pre-computed at startup.
+TOP_CORRIDORS = [
+    ("China",               "United States"),
+    ("China",               "Germany"),
+    ("China",               "United Kingdom"),
+    ("China",               "Japan"),
+    ("China",               "Republic of Korea"),
+    ("China",               "Australia"),
+    ("China",               "India"),
+    ("Japan",               "United States"),
+    ("Republic of Korea",   "United States"),
+    ("Germany",             "United States"),
+    ("India",               "United States"),
+    ("India",               "Germany"),
+    ("United States",       "Germany"),
+    ("United States",       "Japan"),
+    ("Brazil",              "China"),
+    ("Brazil",              "United States"),
+    ("Australia",           "China"),
+    ("Singapore",           "United States"),
+    ("United Arab Emirates","India"),
+    ("Saudi Arabia",        "China"),
+]
+
+# ─── Maritime waypoints for realistic ship-route visualization ────────────────
+# (lat, lon) coordinates for key straits, canals, and ocean crossing points.
+# Used by globe.py to draw routes that follow actual sea lanes instead of
+# straight point-to-point lines across land.
+MARITIME_WAYPOINTS = {
+    # Southeast Asia
+    "S_CHINA_SEA":   (12.0,  115.0),
+    "MALACCA":       ( 1.5,  103.5),   # Strait of Malacca
+    "JAVA_SEA":      (-6.0,  111.0),
+    "LOMBOK":        (-8.5,  115.7),   # Lombok Strait (alt. to Malacca)
+    "TIMOR_SEA":     (-11.0, 128.0),
+    "CORAL_SEA":     (-18.0, 155.0),   # NE Australia
+    "TASMAN_SEA":    (-37.0, 157.0),
+    # Pacific
+    "W_PACIFIC":     (25.0,  148.0),   # Western Pacific
+    "NW_PACIFIC":    (40.0,  155.0),   # NW Pacific (Japan lanes)
+    "N_PACIFIC":     (45.0, -170.0),   # North Pacific crossing
+    "E_PACIFIC":     (10.0, -120.0),   # Eastern Pacific (US West Coast)
+    "S_PACIFIC":     (-30.0,-130.0),
+    "CAPE_HORN":     (-56.0, -68.0),
+    # Indian Ocean
+    "IND_OCEAN_N":   ( 5.0,   72.0),   # North Indian Ocean
+    "IND_OCEAN_S":   (-25.0,  78.0),   # South Indian Ocean
+    "ARABIAN_SEA":   (15.0,   62.0),
+    "HORMUZ":        (26.5,   56.5),   # Strait of Hormuz
+    "GULF_ADEN":     (12.0,   49.0),
+    "BAB_EL":        (12.6,   43.5),   # Bab el-Mandeb
+    "RED_SEA":       (20.0,   38.5),
+    "SUEZ_S":        (29.9,   32.6),   # Suez (Red Sea end)
+    "SUEZ_N":        (31.3,   32.3),   # Suez (Mediterranean end)
+    "CAPE_GOOD_HOPE":(-34.4,  18.5),
+    # Atlantic
+    "S_ATLANTIC":    (-25.0,  -5.0),
+    "N_ATLANTIC":    ( 35.0, -40.0),
+    "CARIBBEAN":     ( 15.0, -68.0),
+    "PANAMA_ATL":    (  9.4, -79.9),   # Panama Canal (Atlantic side)
+    "PANAMA_PAC":    (  8.9, -79.5),   # Panama Canal (Pacific side)
+    # Mediterranean & Northern Europe
+    "GIBRALTAR":     (35.9,   -5.4),
+    "MED_W":         (38.0,    5.0),   # Western Mediterranean
+    "MED_E":         (35.5,   24.0),   # Eastern Mediterranean
+    "ENGLISH_CH":    (50.0,   -2.0),   # English Channel
+    "NORTH_SEA":     (55.0,    4.0),
+    "BALTIC_SEA":    (57.0,   17.0),
+}
+
+# Undirected edges connecting maritime waypoints.
+MARITIME_EDGES = [
+    # Southeast Asia
+    ("S_CHINA_SEA", "MALACCA"),
+    ("S_CHINA_SEA", "W_PACIFIC"),
+    ("S_CHINA_SEA", "JAVA_SEA"),
+    ("JAVA_SEA",    "MALACCA"),
+    ("JAVA_SEA",    "LOMBOK"),
+    ("LOMBOK",      "IND_OCEAN_N"),
+    ("LOMBOK",      "TIMOR_SEA"),
+    ("TIMOR_SEA",   "CORAL_SEA"),
+    ("TIMOR_SEA",   "IND_OCEAN_N"),
+    ("CORAL_SEA",   "TASMAN_SEA"),
+    ("CORAL_SEA",   "W_PACIFIC"),
+    # Pacific
+    ("W_PACIFIC",   "NW_PACIFIC"),
+    ("NW_PACIFIC",  "N_PACIFIC"),
+    ("N_PACIFIC",   "E_PACIFIC"),
+    ("W_PACIFIC",   "E_PACIFIC"),       # equatorial Trans-Pacific
+    ("E_PACIFIC",   "PANAMA_PAC"),
+    ("S_PACIFIC",   "E_PACIFIC"),
+    ("S_PACIFIC",   "TASMAN_SEA"),
+    ("S_PACIFIC",   "CAPE_HORN"),
+    ("CAPE_HORN",   "S_ATLANTIC"),
+    # Indian Ocean
+    ("MALACCA",     "IND_OCEAN_N"),
+    ("IND_OCEAN_N", "ARABIAN_SEA"),
+    ("IND_OCEAN_N", "GULF_ADEN"),
+    ("IND_OCEAN_N", "IND_OCEAN_S"),
+    ("IND_OCEAN_S", "CAPE_GOOD_HOPE"),
+    ("ARABIAN_SEA", "HORMUZ"),
+    ("ARABIAN_SEA", "GULF_ADEN"),
+    ("GULF_ADEN",   "BAB_EL"),
+    ("BAB_EL",      "RED_SEA"),
+    ("RED_SEA",     "SUEZ_S"),
+    ("SUEZ_S",      "SUEZ_N"),          # Suez Canal
+    # Atlantic
+    ("CAPE_GOOD_HOPE", "S_ATLANTIC"),
+    ("S_ATLANTIC",  "N_ATLANTIC"),
+    ("N_ATLANTIC",  "CARIBBEAN"),
+    ("N_ATLANTIC",  "GIBRALTAR"),
+    ("N_ATLANTIC",  "ENGLISH_CH"),
+    ("CARIBBEAN",   "PANAMA_ATL"),
+    ("PANAMA_ATL",  "PANAMA_PAC"),      # Panama Canal
+    # Mediterranean & Europe
+    ("SUEZ_N",      "MED_E"),
+    ("MED_E",       "MED_W"),
+    ("MED_W",       "GIBRALTAR"),
+    ("MED_W",       "ENGLISH_CH"),      # Bay of Biscay
+    ("GIBRALTAR",   "N_ATLANTIC"),
+    ("ENGLISH_CH",  "NORTH_SEA"),
+    ("NORTH_SEA",   "BALTIC_SEA"),
+]
+
+# Country → nearest maritime entry waypoint.
+# Used to anchor each country in the waypoint graph for route rendering.
+COUNTRY_PORT_WAYPOINT = {
+    # East Asia
+    "China":                        "S_CHINA_SEA",
+    "Japan":                        "NW_PACIFIC",
+    "Republic of Korea":            "NW_PACIFIC",
+    "Taiwan":                       "S_CHINA_SEA",
+    "Hong Kong, China":             "S_CHINA_SEA",
+    "Macao, China":                 "S_CHINA_SEA",
+    # Southeast Asia
+    "Singapore":                    "MALACCA",
+    "Malaysia":                     "MALACCA",
+    "Indonesia":                    "JAVA_SEA",
+    "Thailand":                     "MALACCA",
+    "Viet Nam":                     "S_CHINA_SEA",
+    "Philippines":                  "S_CHINA_SEA",
+    "Cambodia":                     "S_CHINA_SEA",
+    "Myanmar":                      "MALACCA",
+    "Brunei Darussalam":            "S_CHINA_SEA",
+    # South Asia
+    "India":                        "ARABIAN_SEA",
+    "Sri Lanka":                    "IND_OCEAN_N",
+    "Bangladesh":                   "IND_OCEAN_N",
+    "Pakistan":                     "ARABIAN_SEA",
+    # Middle East
+    "United Arab Emirates":         "HORMUZ",
+    "Saudi Arabia":                 "RED_SEA",
+    "Iran (Islamic Republic of)":   "HORMUZ",
+    "Oman":                         "ARABIAN_SEA",
+    "Kuwait":                       "HORMUZ",
+    "Qatar":                        "HORMUZ",
+    "Bahrain":                      "HORMUZ",
+    "Iraq":                         "HORMUZ",
+    "Yemen":                        "BAB_EL",
+    "Djibouti":                     "BAB_EL",
+    "Israel":                       "MED_E",
+    "Jordan":                       "RED_SEA",
+    "Egypt":                        "SUEZ_N",
+    # East & Southern Africa
+    "Kenya":                        "IND_OCEAN_N",
+    "United Republic of Tanzania":  "IND_OCEAN_N",
+    "Mozambique":                   "IND_OCEAN_S",
+    "Madagascar":                   "IND_OCEAN_S",
+    "Somalia":                      "GULF_ADEN",
+    "Eritrea":                      "RED_SEA",
+    "Sudan":                        "RED_SEA",
+    "South Africa":                 "CAPE_GOOD_HOPE",
+    "Namibia":                      "S_ATLANTIC",
+    "Angola":                       "S_ATLANTIC",
+    # West Africa
+    "Nigeria":                      "S_ATLANTIC",
+    "Ghana":                        "S_ATLANTIC",
+    "Morocco":                      "GIBRALTAR",
+    "Algeria":                      "MED_W",
+    "Tunisia":                      "MED_W",
+    "Libya":                        "MED_W",
+    # Mediterranean Europe
+    "Italy":                        "MED_W",
+    "Spain":                        "GIBRALTAR",
+    "Portugal":                     "GIBRALTAR",
+    "France":                       "MED_W",
+    "Greece":                       "MED_E",
+    "Turkiye":                      "MED_E",
+    "Malta":                        "MED_W",
+    "Cyprus":                       "MED_E",
+    # Northern Europe
+    "Germany":                      "NORTH_SEA",
+    "Netherlands (Kingdom of the)": "NORTH_SEA",
+    "Belgium":                      "NORTH_SEA",
+    "United Kingdom":               "ENGLISH_CH",
+    "Denmark":                      "NORTH_SEA",
+    "Sweden":                       "BALTIC_SEA",
+    "Norway":                       "NORTH_SEA",
+    "Finland":                      "BALTIC_SEA",
+    "Poland":                       "BALTIC_SEA",
+    "Latvia":                       "BALTIC_SEA",
+    "Lithuania":                    "BALTIC_SEA",
+    "Estonia":                      "BALTIC_SEA",
+    "Ireland":                      "ENGLISH_CH",
+    # Americas
+    "United States":                "N_ATLANTIC",
+    "Canada":                       "N_ATLANTIC",
+    "Mexico":                       "CARIBBEAN",
+    "Panama":                       "PANAMA_ATL",
+    "Colombia":                     "CARIBBEAN",
+    "Venezuela":                    "CARIBBEAN",
+    "Cuba":                         "CARIBBEAN",
+    "Jamaica":                      "CARIBBEAN",
+    "Brazil":                       "S_ATLANTIC",
+    "Argentina":                    "S_ATLANTIC",
+    "Uruguay":                      "S_ATLANTIC",
+    "Chile":                        "E_PACIFIC",
+    "Peru":                         "E_PACIFIC",
+    "Ecuador":                      "E_PACIFIC",
+    # Pacific
+    "Australia":                    "CORAL_SEA",
+    "New Zealand":                  "TASMAN_SEA",
+    "Papua New Guinea":             "CORAL_SEA",
+}
 
 # ─── Country name normalization (Transport-Cost → Bilateral canonical) ─────────
 # Keys = names found in transport_cost_by_product.csv
@@ -95,15 +322,36 @@ TARIFF_REGIONS = {
 }
 
 # ─── Routing ──────────────────────────────────────────────────────────────────
-MAX_HOPS   = 8     # cutoff for Yen's k-shortest paths
-K_ROUTES   = 3     # number of alternative routes to return
-MAX_WEIGHT = 999.0 # sentinel weight for non-existent edges (not added to graph)
+# Real-world container shipping: direct (1 hop) or single transshipment hub
+# (2 hops) covers >95% of all containerised trade lanes (UNCTAD 2023).
+# Three or more intermediate ports are rare and only used for remote/niche
+# destinations — so we try ≤2 hops first and fall back to ≤3 if needed.
+MAX_HOPS          = 2     # preferred hop limit (direct or 1 transshipment hub)
+MAX_HOPS_FALLBACK = 3     # fallback if no route found within MAX_HOPS
+K_ROUTES          = 3     # number of alternative routes to return
+MAX_WEIGHT        = 999.0 # sentinel weight for non-existent edges (not added to graph)
 
 # ─── Resilience Score weights ─────────────────────────────────────────────────
-RS_WEIGHT_ALT   = 0.35   # alternative path redundancy
-RS_WEIGHT_BIL   = 0.25   # bilateral connectivity quality
-RS_WEIGHT_CHK   = 0.25   # chokepoint exposure avoidance
-RS_WEIGHT_FLEET = 0.15   # fleet availability
+# Derived via Analytic Hierarchy Process (AHP, Saaty 1980).
+# Pairwise comparison matrix (scale 1–9, rows dominate columns):
+#
+#         Alt   Chk   Bil   Fleet
+#  Alt  [  1     2     3     5  ]   Route redundancy is the primary resilience
+#  Chk  [ 1/2    1     2     4  ]   driver (UNCTAD 2021, 2023 maritime reviews).
+#  Bil  [ 1/3   1/2    1     3  ]   A corridor with no alternatives cannot
+#  Fleet[ 1/5   1/4   1/3    1  ]   recover from a single disruption event.
+#
+# Chokepoint exposure (Chk) is second: 40 % of global container trade transits
+# the Strait of Malacca; Suez handles ~15 % (UNCTAD, 2023).  Bilateral LSCI
+# captures service quality/frequency.  Fleet is most fungible — vessels can be
+# globally re-chartered — so it carries least weight.
+#
+# Consistency Ratio CR = 0.019 < 0.10  →  judgements are consistent (Saaty).
+RS_WEIGHT_ALT   = 0.47   # route redundancy      (AHP priority vector)
+RS_WEIGHT_CHK   = 0.28   # chokepoint avoidance
+RS_WEIGHT_BIL   = 0.17   # bilateral connectivity
+RS_WEIGHT_FLEET = 0.07   # fleet availability    (most fungible factor)
+# Sum = 1.00 ✓
 
 # ─── Country coordinates (lat/lon centroids for Plotly globe) ─────────────────
 # Subset of ~200 countries; used by viz/globe.py

@@ -1,7 +1,9 @@
 """
-Route Explorer — primary page.
-Allows users to select O/D/product/year, toggle chokepoints, set tariffs,
-and see real-time Dijkstra rerouting on an interactive globe.
+Route Explorer — multi-criteria route comparison.
+Finds the best route from A → B optimised for three distinct criteria:
+  • Most Resilient  (highest Resilience Score)
+  • Cheapest        (lowest freight cost)
+  • Fastest         (lowest estimated lead time)
 """
 
 import os
@@ -14,76 +16,83 @@ import networkx as nx
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
 sys.path.insert(0, ROOT)
 
-from config import CHOKEPOINTS, PRODUCT_NAMES, YEARS, PRODUCT_CODES
-from src.graph.routing import find_k_routes, apply_scenario, compare_scenarios
+from config import CHOKEPOINTS, PRODUCT_NAMES, LATEST_YEAR
+from src.graph.routing import find_multi_criteria_routes, apply_scenario
 from src.graph.chokepoints import get_tariff_multipliers
-from src.viz.globe import make_route_globe, make_resilience_gauge
+from src.viz.globe import make_multi_criteria_globe, make_resilience_gauge, CRITERIA_COLORS
 
 st.set_page_config(page_title="Route Explorer · SONAR", layout="wide", page_icon="🗺")
 
 st.markdown("""
 <style>
-.main{background:#0e1117} h1,h2,h3,p,label{color:#e6edf3!important}
+.main{background:#0e1117}
+h1,h2,h3,p,label{color:#e6edf3!important}
 .stSidebar{background:#161b22}
-.route-card{background:#161b22;border:1px solid #21262d;border-radius:8px;padding:14px;margin:6px 0}
+.route-card{
+    background:#161b22;border:1px solid #21262d;
+    border-radius:10px;padding:18px 16px;margin:4px 0;
+}
+.route-card h4{margin:0 0 10px 0;font-size:15px}
+.metric-big{font-size:26px;font-weight:700;margin:4px 0}
+.metric-label{font-size:11px;color:#8B949E;text-transform:uppercase;letter-spacing:.5px}
+.tag{display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600}
 </style>""", unsafe_allow_html=True)
 
-# ── Ensure session state is populated (may be accessed via direct page nav) ──
+# ── Guard: session state ───────────────────────────────────────────────────────
 if "graphs" not in st.session_state:
-    st.warning("Please visit the Home page first to initialize the app.")
+    st.warning("Please visit the Home page first to initialise the app.")
     st.stop()
 
-graphs  = st.session_state.graphs
-scorer  = st.session_state.scorer
+graphs = st.session_state.graphs
+scorer = st.session_state.scorer
 
-# ─── Get list of countries from the graph ────────────────────────────────────
 sample_graph = graphs[(2021, 8517)]
 ALL_COUNTRIES = sorted(sample_graph.nodes())
 
-# ─── Sidebar ─────────────────────────────────────────────────────────────────
+# ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## 🔧 Route Configuration")
-    origin = st.selectbox("Origin Country", ALL_COUNTRIES,
-                          index=ALL_COUNTRIES.index("China") if "China" in ALL_COUNTRIES else 0)
-    destination = st.selectbox("Destination Country", ALL_COUNTRIES,
-                                index=ALL_COUNTRIES.index("Germany") if "Germany" in ALL_COUNTRIES else 1)
-    product_label = st.selectbox(
-        "Product",
-        options=list(PRODUCT_NAMES.values()),
+    origin = st.selectbox(
+        "Origin Country", ALL_COUNTRIES,
+        index=ALL_COUNTRIES.index("China") if "China" in ALL_COUNTRIES else 0,
     )
+    destination = st.selectbox(
+        "Destination Country", ALL_COUNTRIES,
+        index=ALL_COUNTRIES.index("Germany") if "Germany" in ALL_COUNTRIES else 1,
+    )
+    product_label = st.selectbox("Product", list(PRODUCT_NAMES.values()))
     product_code = [k for k, v in PRODUCT_NAMES.items() if v == product_label][0]
-    year = st.selectbox("Year", YEARS, index=YEARS.index(2021))
+    year = LATEST_YEAR
 
     st.markdown("---")
     st.markdown("## 🚨 Chokepoint Scenarios")
-    blocked = []
-    for cp_name in CHOKEPOINTS.keys():
-        if st.checkbox(f"{cp_name}", key=f"cp_{cp_name}"):
-            blocked.append(cp_name)
+    blocked = [cp for cp in CHOKEPOINTS if st.checkbox(cp, key=f"cp_{cp}")]
 
     st.markdown("---")
     st.markdown("## 💹 Tariff Scenarios")
     us_tariff    = st.slider("US Tariff (%)",    0, 50, 10, step=5)
-    eu_tariff    = st.slider("EU Tariff (%)",    0, 50, 0,  step=5)
-    china_tariff = st.slider("China Tariff (%)", 0, 50, 0,  step=5)
-    asean_tariff = st.slider("ASEAN Tariff (%)", 0, 50, 0,  step=5)
+    eu_tariff    = st.slider("EU Tariff (%)",    0, 50,  0, step=5)
+    china_tariff = st.slider("China Tariff (%)", 0, 50,  0, step=5)
+    asean_tariff = st.slider("ASEAN Tariff (%)", 0, 50,  0, step=5)
 
     st.markdown("---")
-    show_top_k = st.radio("Routes to display", [1, 3], index=0,
-                          help="Show top 1 or top 3 alternative routes")
-    run_btn = st.button("🔄 Run Simulation", type="primary", use_container_width=True)
 
-# ─── Main panel ───────────────────────────────────────────────────────────────
+# ── Header ─────────────────────────────────────────────────────────────────────
 st.markdown("# 🗺 Route Explorer")
-st.caption(f"**{origin}** → **{destination}** | {product_label} | {year}")
+st.caption(f"**{origin}** → **{destination}** | {product_label} | Latest data ({year})")
 
-# ─── Routing ─────────────────────────────────────────────────────────────────
+if origin == destination:
+    st.warning("Please select different origin and destination countries.")
+    st.stop()
+
+# ── Routing ────────────────────────────────────────────────────────────────────
 key = (year, product_code)
 if key not in graphs:
-    st.error(f"No graph available for year={year}, product={product_code}.")
+    st.error(f"No graph for year={year}, product={product_code}.")
     st.stop()
 
 G_base = graphs[key]
+has_scenario = bool(blocked) or any([us_tariff, eu_tariff, china_tariff, asean_tariff])
 
 tariff_multipliers = get_tariff_multipliers(
     us_pct=float(us_tariff),
@@ -91,129 +100,135 @@ tariff_multipliers = get_tariff_multipliers(
     china_pct=float(china_tariff),
     asean_pct=float(asean_tariff),
 )
-G_scenario = apply_scenario(G_base, blocked, tariff_multipliers)
+G_active = apply_scenario(G_base, blocked, tariff_multipliers) if has_scenario else G_base
 
-# Compute median LSCI for lead time estimation
-all_lsci = [G_base.nodes[n].get("lsci", 0) for n in G_base.nodes()]
+all_lsci   = [G_base.nodes[n].get("lsci", 0) for n in G_base.nodes()]
 median_lsci = float(pd.Series(all_lsci).replace(0, pd.NA).median() or 50.0)
 
-# Baseline routing
-baseline_error = None
-baseline_routes_obj = []
+# ── Compute multi-criteria routes ─────────────────────────────────────────────
 try:
-    baseline_routes_obj = find_k_routes(G_base, origin, destination,
-                                        k=show_top_k, median_lsci=median_lsci)
-except (nx.NetworkXNoPath, nx.NodeNotFound) as e:
-    baseline_error = str(e)
+    routes = find_multi_criteria_routes(
+        G_active, origin, destination, scorer,
+        k_candidates=20, median_lsci=median_lsci,
+    )
+except nx.NodeNotFound as e:
+    st.error(f"Node error: {e}")
+    st.stop()
+except nx.NetworkXNoPath as e:
+    st.error(f"No path found: {e}")
+    st.stop()
 
-# Scenario routing
-scenario_error = None
-scenario_routes_obj = []
-try:
-    scenario_routes_obj = find_k_routes(G_scenario, origin, destination,
-                                        k=show_top_k, median_lsci=median_lsci)
-except (nx.NetworkXNoPath, nx.NodeNotFound) as e:
-    scenario_error = str(e)
+# Convert to dicts for globe
+criteria_dicts = {k: r.to_dict() for k, r in routes.items()}
 
-baseline_dicts = [r.to_dict() for r in baseline_routes_obj]
-scenario_dicts = [r.to_dict() for r in scenario_routes_obj]
-
-# ─── Globe ────────────────────────────────────────────────────────────────────
-globe_fig = make_route_globe(
-    baseline_routes=baseline_dicts,
-    scenario_routes=scenario_dicts if (blocked or any([us_tariff, eu_tariff, china_tariff, asean_tariff])) else [],
+# ── Globe ──────────────────────────────────────────────────────────────────────
+globe_fig = make_multi_criteria_globe(
+    criteria_routes=criteria_dicts,
     blocked_chokepoints=blocked,
-    show_top_k=show_top_k,
 )
 st.plotly_chart(globe_fig, use_container_width=True, config={"displayModeBar": False})
 
-# ─── Results panel ────────────────────────────────────────────────────────────
-if baseline_error:
-    st.error(f"Baseline routing failed: {baseline_error}")
-elif baseline_routes_obj:
-    b_best = baseline_routes_obj[0]
-    rs_base = scorer.score_from_routes(baseline_routes_obj, G_base)
+if has_scenario:
+    st.info(
+        f"🚨 Scenario active: blocked=[{', '.join(blocked)}]  "
+        f"US tariff={us_tariff}%  EU={eu_tariff}%  China={china_tariff}%  ASEAN={asean_tariff}%"
+    )
 
-    has_scenario = bool(blocked) or any([us_tariff, eu_tariff, china_tariff, asean_tariff])
-    s_best = scenario_routes_obj[0] if scenario_routes_obj else None
-    rs_scen = scorer.score_from_routes(scenario_routes_obj, G_scenario) if s_best else None
+# ── 3-column route cards ───────────────────────────────────────────────────────
+st.markdown("### Route Comparison by Criterion")
 
-    # Layout: results table + gauge side by side
-    col_table, col_gauge = st.columns([3, 1])
+CARD_CONFIG = [
+    ("most_resilient", "Most Resilient",  "🛡",  CRITERIA_COLORS["most_resilient"], "Resilience Score"),
+    ("cheapest",       "Cheapest",        "💰",  CRITERIA_COLORS["cheapest"],       "Freight Cost"),
+    ("fastest",        "Fastest",         "⚡",  CRITERIA_COLORS["fastest"],        "Lead Time"),
+]
 
-    with col_table:
-        st.markdown("### Route Comparison")
-        rows = []
+col1, col2, col3 = st.columns(3)
+cols = [col1, col2, col3]
 
-        # Baseline row
-        rows.append({
-            "Scenario":        "Baseline",
-            "Route":           " → ".join(b_best.path),
-            "Freight Rate":    f"{b_best.cost:.4f}",
-            "Lead Time":       f"{b_best.lead_time_days:.0f} days",
-            "Hops":            b_best.hops,
-            "RS Score":        f"{rs_base['score']:.1f} / 100",
-            "RS Label":        rs_base["label"],
-            "ML Predicted":    "⚠ Yes" if b_best.has_predicted else "✓ Observed",
-        })
+for col, (crit_key, crit_label, icon, color, highlight_label) in zip(cols, CARD_CONFIG):
+    r = routes[crit_key]
+    rd = criteria_dicts[crit_key]
 
-        if has_scenario:
-            if scenario_error:
-                st.warning(f"No viable route under scenario: {scenario_error}")
-            elif s_best:
-                premium_pct = (s_best.cost - b_best.cost) / (b_best.cost + 1e-9) * 100
-                lead_delta  = s_best.lead_time_days - b_best.lead_time_days
-                rows.append({
-                    "Scenario":     "After Scenario",
-                    "Route":        " → ".join(s_best.path),
-                    "Freight Rate": f"{s_best.cost:.4f}",
-                    "Lead Time":    f"{s_best.lead_time_days:.0f} days",
-                    "Hops":         s_best.hops,
-                    "RS Score":     f"{rs_scen['score']:.1f} / 100",
-                    "RS Label":     rs_scen["label"],
-                    "ML Predicted": "⚠ Yes" if s_best.has_predicted else "✓ Observed",
-                })
-                # Cost delta callout
-                delta_color = "🔴" if premium_pct > 0 else "🟢"
-                st.markdown(
-                    f"{delta_color} **Cost change: {premium_pct:+.1f}%** · "
-                    f"Lead time change: **{lead_delta:+.0f} days**"
+    # Highlighted metric varies by criterion
+    if crit_key == "most_resilient":
+        highlight_val = f"{r.rs:.1f} / 100"
+    elif crit_key == "cheapest":
+        highlight_val = f"{r.cost:.4f}"
+    else:
+        highlight_val = f"{r.lead_time_days:.0f} days"
+
+    # RS label colours
+    rs_score = r.rs
+    rs_color = (
+        "#27AE60" if rs_score >= 75 else
+        "#F39C12" if rs_score >= 50 else
+        "#E74C3C" if rs_score >= 25 else "#8E44AD"
+    )
+
+    with col:
+        st.markdown(
+            f"""<div class="route-card" style="border-top:3px solid {color}">
+            <h4>{icon} {crit_label}</h4>
+            <div class="metric-label">{highlight_label}</div>
+            <div class="metric-big" style="color:{color}">{highlight_val}</div>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+
+        # Route path
+        st.markdown(f"**Path** ({r.hops} hop{'s' if r.hops != 1 else ''})")
+        st.markdown(" → ".join(f"`{c}`" for c in r.path))
+
+        # Key metrics table
+        st.dataframe(
+            pd.DataFrame([
+                {"Metric": "Freight Cost",    "Value": f"{r.cost:.4f}"},
+                {"Metric": "Lead Time",       "Value": f"{r.lead_time_days:.0f} d"},
+                {"Metric": "Hops",            "Value": str(r.hops)},
+                {"Metric": "Chokepoint Exp.", "Value": f"{rd['chk_exposure']:.0%}"},
+                {"Metric": "RS Score",        "Value": f"{rs_score:.1f} / 100"},
+                {"Metric": "ML Predicted",    "Value": "Yes ⚠" if rd["has_predicted"] else "No ✓"},
+            ]).set_index("Metric"),
+            use_container_width=True,
+        )
+
+        # RS gauge
+        st.plotly_chart(
+            make_resilience_gauge(rs_score, crit_label),
+            use_container_width=True,
+            config={"displayModeBar": False},
+        )
+
+        # RS component breakdown
+        if hasattr(r, "rs_detail") and r.rs_detail:
+            with st.expander("Resilience breakdown"):
+                comp = r.rs_detail.get("components_pct", {})
+                st.dataframe(
+                    pd.DataFrame([
+                        {"Component": k, "Contribution (pts)": f"{v:.1f}"}
+                        for k, v in comp.items()
+                    ]).set_index("Component"),
+                    use_container_width=True,
                 )
 
-        st.dataframe(pd.DataFrame(rows).set_index("Scenario"),
-                     use_container_width=True)
-
-        # Component breakdown
-        st.markdown("#### Resilience Score Breakdown (Baseline)")
-        comp_df = pd.DataFrame([{
-            "Component":   k,
-            "Contribution (pts)": v,
-        } for k, v in rs_base["components_pct"].items()])
-        st.dataframe(comp_df.set_index("Component"), use_container_width=True)
-
-    with col_gauge:
-        gauge_score  = rs_base["score"]
-        gauge_label  = rs_base["label"]
-        if has_scenario and rs_scen:
-            gauge_score  = rs_scen["score"]
-            gauge_label  = f"Scenario: {rs_scen['label']}"
-        st.plotly_chart(make_resilience_gauge(gauge_score, gauge_label),
-                        use_container_width=True,
-                        config={"displayModeBar": False})
-
-        st.markdown(f"""
-        <div class="route-card">
-        <b>Score Components</b><br>
-        🔄 Redundancy: {rs_base['alt']:.2f}<br>
-        📡 Connectivity: {rs_base['bil']:.2f}<br>
-        ⚠ Chokepoint: {rs_base['chk']:.2f}<br>
-        🚢 Fleet: {rs_base['fleet']:.2f}
-        </div>""", unsafe_allow_html=True)
-
-# ─── All k routes table ───────────────────────────────────────────────────────
-if len(baseline_routes_obj) > 1:
-    with st.expander(f"All {len(baseline_routes_obj)} Baseline Routes"):
-        all_rows = [r.to_dict() for r in baseline_routes_obj]
-        st.dataframe(pd.DataFrame(all_rows)[
-            ["path_str", "cost", "hops", "lead_time_days", "chk_exposure", "has_predicted"]
-        ], use_container_width=True)
+# ── Summary trade-off table ───────────────────────────────────────────────────
+st.markdown("---")
+st.markdown("### Trade-off Summary")
+summary_rows = []
+for crit_key, crit_label, icon, color, _ in CARD_CONFIG:
+    r  = routes[crit_key]
+    rd = criteria_dicts[crit_key]
+    summary_rows.append({
+        "Criterion":      f"{icon} {crit_label}",
+        "Route":          " → ".join(r.path),
+        "Freight Cost":   round(r.cost, 4),
+        "Lead Time (d)":  r.lead_time_days,
+        "Hops":           r.hops,
+        "Chk Exposure":   f"{rd['chk_exposure']:.0%}",
+        "RS Score":       round(r.rs, 1),
+    })
+st.dataframe(
+    pd.DataFrame(summary_rows).set_index("Criterion"),
+    use_container_width=True,
+)

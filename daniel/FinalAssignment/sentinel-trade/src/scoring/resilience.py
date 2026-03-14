@@ -1,14 +1,17 @@
 """
-Resilience Score — a novel composite 0-100 index for supply chain route risk.
+Resilience Score — a composite 0-100 index for supply chain route resilience.
 
 Formula:
-    RS = 100 × (0.35 × Alt + 0.25 × Bil + 0.25 × Chk + 0.15 × Fleet)
+    RS = 100 × (0.47 × Alt + 0.28 × Chk + 0.17 × Bil + 0.07 × Fleet)
 
 Components:
-    Alt   — alternative path redundancy (economic detour cost)
-    Bil   — bilateral connectivity quality along route
-    Chk   — chokepoint exposure avoidance
-    Fleet — fleet availability on corridor
+    Alt   — Route Redundancy: cost premium of 2nd-best path vs optimal
+    Chk   — Chokepoint Avoidance: fraction of route avoiding high-BC nodes
+    Bil   — Bilateral Connectivity: normalised bilateral LSCI along route
+    Fleet — Fleet Availability: normalised fleet ownership on corridor
+
+Weights derived via Analytic Hierarchy Process (AHP, Saaty 1980).
+Consistency Ratio CR = 0.019 < 0.10.  See config.py for the full matrix.
 """
 
 import os
@@ -60,15 +63,23 @@ class ResilienceScorer:
     def _alt_component(self, cost_k1: float, cost_k2: float | None) -> float:
         """
         Alt ∈ [0, 1].
-        Measures how cheap the second-best route is relative to the best.
-        premium ≥ 200% (cost_k2 is 3× cost_k1) → Alt = 0.
-        cost_k2 == cost_k1 → Alt = 1 (perfect redundancy).
-        Only one path exists → Alt = 0.
+        Measures how viable the second-best route is relative to the cheapest.
+
+        With routes constrained to ≤2 hops (direct or single transshipment),
+        alternatives route through geographically comparable hubs.  A cost
+        premium of 100 % (k2 costs 2× k1) is therefore already a strong
+        signal of poor redundancy — so the cap is set at 100 % rather than
+        the 200 % used when long multi-hop detours are permitted.
+
+        premium = 0 %   → Alt = 1.0  (perfect substitutes)
+        premium = 50 %  → Alt = 0.5
+        premium ≥ 100 % → Alt = 0.0  (effectively no viable alternative)
+        No k2 route     → Alt = 0.0
         """
         if cost_k2 is None or cost_k2 <= 0:
             return 0.0
         premium = (cost_k2 - cost_k1) / (cost_k1 + 1e-9)
-        return float(max(0.0, 1.0 - premium / 2.0))
+        return float(max(0.0, 1.0 - premium))
 
     def _bil_component(self, path: list[str], G: nx.DiGraph) -> float:
         """
