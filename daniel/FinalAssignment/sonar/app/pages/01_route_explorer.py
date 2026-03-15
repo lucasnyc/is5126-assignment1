@@ -163,14 +163,6 @@ for col, (crit_key, crit_label, icon, color, highlight_label) in zip(cols, CARD_
     r = routes[crit_key]
     rd = criteria_dicts[crit_key]
 
-    # Highlighted metric varies by criterion
-    if crit_key == "most_resilient":
-        highlight_val = f"{r.rs:.1f} / 100"
-    elif crit_key == "cheapest":
-        highlight_val = f"{r.cost:.4f}"
-    else:
-        highlight_val = f"{r.lead_time_days:.0f} days"
-
     # RS label colours
     rs_score = r.rs
     rs_color = (
@@ -179,12 +171,37 @@ for col, (crit_key, crit_label, icon, color, highlight_label) in zip(cols, CARD_
         "#E74C3C" if rs_score >= 25 else "#8E44AD"
     )
 
+    # Highlighted metric varies by criterion
+    if crit_key == "most_resilient":
+        highlight_val = f"{r.rs:.1f} / 100"
+        highlight_color = color
+    elif crit_key == "cheapest":
+        highlight_val = f"{r.cost * 100:.2f}%"
+        highlight_color = color
+    else:
+        highlight_val = f"{r.lead_time_days:.0f} days"
+        highlight_color = color
+
     with col:
         st.markdown(
             f"""<div class="route-card" style="border-top:3px solid {color}">
             <h4>{icon} {crit_label}</h4>
             <div class="metric-label">{highlight_label}</div>
-            <div class="metric-big" style="color:{color}">{highlight_val}</div>
+            <div class="metric-big" style="color:{highlight_color}">{highlight_val}</div>
+            <div style="margin-top:0.75rem;display:flex;gap:1.2rem;flex-wrap:wrap">
+              <div>
+                <div style="font-size:0.65rem;color:#aaa;text-transform:uppercase;letter-spacing:.05em">RS Score</div>
+                <div style="font-size:1rem;font-weight:600;color:{rs_color}">{r.rs:.1f}<span style="font-size:0.7rem;color:#aaa"> / 100</span></div>
+              </div>
+              <div>
+                <div style="font-size:0.65rem;color:#aaa;text-transform:uppercase;letter-spacing:.05em">Freight Cost</div>
+                <div style="font-size:1rem;font-weight:600;color:#ccc">{r.cost * 100:.2f}%</div>
+              </div>
+              <div>
+                <div style="font-size:0.65rem;color:#aaa;text-transform:uppercase;letter-spacing:.05em">Lead Time</div>
+                <div style="font-size:1rem;font-weight:600;color:#ccc">{r.lead_time_days:.0f}<span style="font-size:0.7rem;color:#aaa"> d</span></div>
+              </div>
+            </div>
             </div>""",
             unsafe_allow_html=True,
         )
@@ -196,7 +213,7 @@ for col, (crit_key, crit_label, icon, color, highlight_label) in zip(cols, CARD_
         # Key metrics table
         st.dataframe(
             pd.DataFrame([
-                {"Metric": "Freight Cost",    "Value": f"{r.cost:.4f}"},
+                {"Metric": "Freight Cost",    "Value": f"{r.cost * 100:.2f}%"},
                 {"Metric": "Lead Time",       "Value": f"{r.lead_time_days:.0f} d"},
                 {"Metric": "Hops",            "Value": str(r.hops)},
                 {"Metric": "Chokepoint Exp.", "Value": f"{rd['chk_exposure']:.0%}"},
@@ -235,7 +252,7 @@ for crit_key, crit_label, icon, color, _ in CARD_CONFIG:
     summary_rows.append({
         "Criterion":      f"{icon} {crit_label}",
         "Route":          " → ".join(r.path),
-        "Freight Cost":   round(r.cost, 4),
+        "Freight Cost":   f"{r.cost * 100:.2f}%",
         "Lead Time (d)":  r.lead_time_days,
         "Hops":           r.hops,
         "Chk Exposure":   f"{rd['chk_exposure']:.0%}",
