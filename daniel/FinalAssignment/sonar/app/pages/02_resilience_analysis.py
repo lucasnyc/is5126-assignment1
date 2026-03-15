@@ -166,13 +166,24 @@ chosen_prod_code = [k for k, v in PRODUCT_NAMES.items() if v == chosen_product][
 orig_c, dest_c = chosen_corridor.split(" → ", 1)
 gkey = (year, chosen_prod_code)
 if gkey in graphs:
-    tariff_mult = get_tariff_multipliers(float(us_t), float(eu_t), float(cn_t), 0.0)
-    G_s = apply_scenario(graphs[gkey], blocked, tariff_mult)
-    try:
-        routes = find_k_routes(G_s, orig_c, dest_c, k=3)
-        rs     = scorer.score_from_routes(routes, G_s)
-        comp   = rs["components_pct"]
+    tariff_mult  = get_tariff_multipliers(float(us_t), float(eu_t), float(cn_t), 0.0)
+    _drill_key   = (orig_c, dest_c, chosen_prod_code, year, tuple(sorted(blocked)), us_t, eu_t, cn_t)
+    _drill_cache = st.session_state.setdefault("_ra_drill_cache", {})
+    if _drill_key not in _drill_cache:
+        G_s = apply_scenario(graphs[gkey], blocked, tariff_mult)
+        try:
+            _dr = find_k_routes(G_s, orig_c, dest_c, k=3)
+            _rs = scorer.score_from_routes(_dr, G_s)
+            _drill_cache[_drill_key] = ("ok", _dr, _rs)
+        except (nx.NetworkXNoPath, nx.NodeNotFound) as e:
+            _drill_cache[_drill_key] = ("err", str(e))
 
+    _result = _drill_cache[_drill_key]
+    if _result[0] == "err":
+        st.warning(f"No route found: {_result[1]}")
+    else:
+        _, routes, rs = _result
+        comp = rs["components_pct"]
         fig_bar = go.Figure(go.Bar(
             x=list(comp.keys()),
             y=list(comp.values()),
@@ -194,5 +205,3 @@ if gkey in graphs:
         st.plotly_chart(fig_bar, use_container_width=True)
         st.markdown(f"**Overall Score: {rs['score']:.1f} / 100** — {rs['label']}")
         st.markdown(f"Best route: `{routes[0].to_dict()['path_str']}`")
-    except (nx.NetworkXNoPath, nx.NodeNotFound) as e:
-        st.warning(f"No route found: {e}")

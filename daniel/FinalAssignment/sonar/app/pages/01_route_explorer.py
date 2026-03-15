@@ -100,34 +100,45 @@ tariff_multipliers = get_tariff_multipliers(
     china_pct=float(china_tariff),
     asean_pct=float(asean_tariff),
 )
-G_active = apply_scenario(G_base, blocked, tariff_multipliers) if has_scenario else G_base
 
-all_lsci    = [G_base.nodes[n].get("lsci", 0) for n in G_base.nodes()]
-median_lsci = float(pd.Series(all_lsci).replace(0, pd.NA).median() or 50.0)
-blocked_wps = frozenset(wp for cp in blocked for wp in CHOKEPOINT_WAYPOINTS.get(cp, []))
-
-# ── Compute multi-criteria routes ─────────────────────────────────────────────
-try:
-    routes = find_multi_criteria_routes(
-        G_active, origin, destination, scorer,
-        k_candidates=20, median_lsci=median_lsci,
-        blocked_wps=blocked_wps,
-    )
-except nx.NodeNotFound as e:
-    st.error(f"Node error: {e}")
-    st.stop()
-except nx.NetworkXNoPath as e:
-    st.error(f"No path found: {e}")
-    st.stop()
-
-# Convert to dicts for globe
-criteria_dicts = {k: r.to_dict() for k, r in routes.items()}
-
-# ── Globe ──────────────────────────────────────────────────────────────────────
-globe_fig = make_multi_criteria_globe(
-    criteria_routes=criteria_dicts,
-    blocked_chokepoints=blocked,
+# ── Compute multi-criteria routes (session-state memoised) ────────────────────
+_cache_key = (
+    origin, destination, product_code, year,
+    tuple(sorted(blocked)),
+    us_tariff, eu_tariff, china_tariff, asean_tariff,
 )
+_routes_cache = st.session_state.setdefault("_re_routes_cache", {})
+
+if _cache_key not in _routes_cache:
+    G_active    = apply_scenario(G_base, blocked, tariff_multipliers) if has_scenario else G_base
+    all_lsci    = [G_base.nodes[n].get("lsci", 0) for n in G_base.nodes()]
+    median_lsci = float(pd.Series(all_lsci).replace(0, pd.NA).median() or 50.0)
+    blocked_wps = frozenset(wp for cp in blocked for wp in CHOKEPOINT_WAYPOINTS.get(cp, []))
+    try:
+        _routes_cache[_cache_key] = find_multi_criteria_routes(
+            G_active, origin, destination, scorer,
+            k_candidates=20, median_lsci=median_lsci,
+            blocked_wps=blocked_wps,
+        )
+    except nx.NodeNotFound as e:
+        st.error(f"Node error: {e}")
+        st.stop()
+    except nx.NetworkXNoPath as e:
+        st.error(f"No path found: {e}")
+        st.stop()
+
+routes = _routes_cache[_cache_key]
+
+# ── Globe (session-state memoised) ────────────────────────────────────────────
+_globe_cache = st.session_state.setdefault("_re_globe_cache", {})
+if _cache_key not in _globe_cache:
+    criteria_dicts = {k: r.to_dict() for k, r in routes.items()}
+    _globe_cache[_cache_key] = (
+        criteria_dicts,
+        make_multi_criteria_globe(criteria_routes=criteria_dicts, blocked_chokepoints=blocked),
+    )
+criteria_dicts, globe_fig = _globe_cache[_cache_key]
+
 st.plotly_chart(globe_fig, use_container_width=True, config={"displayModeBar": False})
 
 if has_scenario:
