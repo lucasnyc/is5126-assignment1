@@ -467,9 +467,8 @@ def make_corridor_heatmap(
         texttemplate="%{text}",
         hovertemplate="<b>%{y}</b><br>%{x}: %{z:.1f}<extra></extra>",
         colorbar=dict(
-            title="RS",
+            title=dict(text="RS", font=dict(color="white")),
             tickfont=dict(color="white"),
-            titlefont=dict(color="white"),
         ),
     ))
     fig.update_layout(
