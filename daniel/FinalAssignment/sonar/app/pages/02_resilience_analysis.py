@@ -21,13 +21,12 @@ from config import PRODUCT_NAMES, PRODUCT_CODES, LATEST_YEAR, CHOKEPOINTS, TOP_C
 from src.graph.routing import find_k_routes, apply_scenario
 from src.graph.chokepoints import get_tariff_multipliers
 from src.viz.globe import make_corridor_heatmap, COLORS
+from app.components.theme import inject_global_css, section_header, stat_card, render_footer
 
-st.set_page_config(page_title="Resilience Analysis · SONAR",
-                   layout="wide", page_icon="📊")
-st.markdown("""<style>
-.main{background:#0e1117} h1,h2,h3,p,label{color:#e6edf3!important}
-.stSidebar{background:#161b22}
-</style>""", unsafe_allow_html=True)
+st.set_page_config(page_title="Resilience Analysis \u00b7 SONAR",
+                   layout="wide", page_icon="\U0001f4ca")
+
+inject_global_css()
 
 if "graphs" not in st.session_state:
     st.warning("Please visit the Home page first.")
@@ -39,7 +38,7 @@ year    = LATEST_YEAR
 
 # ─── Sidebar controls ─────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("## 📊 Resilience Analysis")
+    st.markdown("## \U0001f4ca Resilience Analysis")
     selected_products = st.multiselect(
         "Products",
         options=list(PRODUCT_NAMES.values()),
@@ -57,7 +56,7 @@ with st.sidebar:
     cn_t = st.slider("China Tariff (%)", 0, 50, 0, step=5, key="rs_cn")
     st.caption("Scores update automatically when inputs change.")
 
-st.markdown("# 📊 Resilience Analysis")
+st.markdown("# \U0001f4ca Resilience Analysis")
 st.caption("Compare route resilience across the top global trade corridors.")
 
 # ─── Resolve active corridor / product slice ──────────────────────────────────
@@ -66,8 +65,6 @@ selected_codes   = [k for k, v in PRODUCT_NAMES.items() if v in selected_product
 has_scenario     = bool(blocked) or any([us_t, eu_t, cn_t])
 
 # ─── Fetch heatmap data ───────────────────────────────────────────────────────
-# Baseline (no scenario): read from pre-computed session_state cache — instant.
-# Scenario active: run focused recompute (only affected corridors/products).
 
 @st.cache_data(show_spinner="Computing scenario scores...")
 def compute_scenario_data(
@@ -104,7 +101,6 @@ def compute_scenario_data(
 
 
 if not has_scenario and "heatmap_baseline" in st.session_state:
-    # Slice the pre-computed full baseline to the user's current selection
     top_set = {(o, d) for o, d in active_corridors}
     data = [
         r for r in st.session_state.heatmap_baseline
@@ -122,48 +118,82 @@ if not data:
     st.stop()
 
 # ─── Heatmap ─────────────────────────────────────────────────────────────────
+section_header("\U0001f5fa", "Resilience Heatmap", f"Top {n_corridors} corridors \u00b7 {year}")
 heatmap_fig = make_corridor_heatmap(
     data,
-    title=f"Resilience Scores — Top {n_corridors} Corridors ({year})"
+    title=f"Resilience Scores \u2014 Top {n_corridors} Corridors ({year})"
 )
 st.plotly_chart(heatmap_fig, use_container_width=True)
 
 # ─── Summary statistics ───────────────────────────────────────────────────────
 df = pd.DataFrame(data)
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("Avg Resilience Score", f"{df['score'].mean():.1f}")
-col2.metric("High Resilience Corridors",
-            int((df['score'] >= 75).sum()))
-col3.metric("Critical Risk Corridors",
-            int((df['score'] < 25).sum()))
-col4.metric("No-Route Corridors",
-            int((df['label'] == 'No Route').sum()))
+avg_score     = df["score"].mean()
+high_count    = int((df["score"] >= 75).sum())
+critical_count = int((df["score"] < 25).sum())
+noroute_count = int((df["label"] == "No Route").sum())
+
+c1, c2, c3, c4 = st.columns(4)
+with c1:
+    st.markdown(
+        stat_card("Avg Resilience Score", f"{avg_score:.1f}",
+                  delta="of 100", delta_type="good" if avg_score >= 50 else "warn"),
+        unsafe_allow_html=True,
+    )
+with c2:
+    st.markdown(
+        stat_card("High Resilience", str(high_count),
+                  delta="corridors \u2265 75 RS", delta_type="good"),
+        unsafe_allow_html=True,
+    )
+with c3:
+    st.markdown(
+        stat_card("Critical Risk", str(critical_count),
+                  delta="corridors < 25 RS",
+                  delta_type="bad" if critical_count > 0 else "good"),
+        unsafe_allow_html=True,
+    )
+with c4:
+    st.markdown(
+        stat_card("No Route", str(noroute_count),
+                  delta="unreachable pairs",
+                  delta_type="bad" if noroute_count > 0 else "good"),
+        unsafe_allow_html=True,
+    )
 
 # ─── Table view ──────────────────────────────────────────────────────────────
-st.markdown("### Detailed Scores")
+st.markdown("---")
+section_header("\U0001f4cb", "Detailed Scores")
 display_df = df.sort_values("score", ascending=False).copy()
-display_df["corridor"] = display_df["origin"] + " → " + display_df["destination"]
-st.dataframe(
+display_df["corridor"] = display_df["origin"] + " \u2192 " + display_df["destination"]
+table_df = (
     display_df[["corridor", "product_name", "score", "label"]]
     .rename(columns={
         "corridor":     "Corridor",
         "product_name": "Product",
         "score":        "RS Score",
         "label":        "Rating",
-    }).reset_index(drop=True),
-    use_container_width=True,
+    }).reset_index(drop=True)
+)
+st.dataframe(table_df, use_container_width=True)
+
+st.download_button(
+    "Download as CSV",
+    data=table_df.to_csv(index=False),
+    file_name=f"sonar_resilience_{n_corridors}_corridors.csv",
+    mime="text/csv",
 )
 
 # ─── Component analysis for selected corridor ─────────────────────────────────
-st.markdown("### Drill Down: Score Components")
+st.markdown("---")
+section_header("\U0001f50d", "Drill Down: Score Components")
 chosen_corridor = st.selectbox(
     "Select corridor to analyze",
-    [f"{o} → {d}" for o, d in active_corridors]
+    [f"{o} \u2192 {d}" for o, d in active_corridors]
 )
 chosen_product   = st.selectbox("Product", list(PRODUCT_NAMES.values()), key="dd_prod")
 chosen_prod_code = [k for k, v in PRODUCT_NAMES.items() if v == chosen_product][0]
 
-orig_c, dest_c = chosen_corridor.split(" → ", 1)
+orig_c, dest_c = chosen_corridor.split(" \u2192 ", 1)
 gkey = (year, chosen_prod_code)
 if gkey in graphs:
     tariff_mult  = get_tariff_multipliers(float(us_t), float(eu_t), float(cn_t), 0.0)
@@ -184,6 +214,29 @@ if gkey in graphs:
     else:
         _, routes, rs = _result
         comp = rs["components_pct"]
+
+        # Score badge
+        score_val = rs["score"]
+        badge_color = (
+            "#27AE60" if score_val >= 75 else
+            "#F39C12" if score_val >= 50 else
+            "#E74C3C" if score_val >= 25 else "#8E44AD"
+        )
+        best_path_str = " \u2192 ".join(routes[0].path)
+        st.markdown(
+            f'<div style="display:flex;align-items:center;gap:16px;margin:12px 0 16px 0">'
+            f'<div style="background:{badge_color}22;border:1px solid {badge_color};'
+            f'border-radius:8px;padding:8px 16px;display:inline-flex;align-items:baseline;gap:6px">'
+            f'<span style="font-size:24px;font-weight:800;color:{badge_color}">{score_val:.1f}</span>'
+            f'<span style="font-size:12px;color:#8B949E">/ 100</span>'
+            f'</div>'
+            f'<div>'
+            f'<div style="font-size:14px;font-weight:600;color:#e6edf3">{rs["label"]}</div>'
+            f'<div style="font-size:12px;color:#8B949E">Best route: {best_path_str}</div>'
+            f'</div></div>',
+            unsafe_allow_html=True,
+        )
+
         fig_bar = go.Figure(go.Bar(
             x=list(comp.keys()),
             y=list(comp.values()),
@@ -203,5 +256,5 @@ if gkey in graphs:
             height=350,
         )
         st.plotly_chart(fig_bar, use_container_width=True)
-        st.markdown(f"**Overall Score: {rs['score']:.1f} / 100** — {rs['label']}")
-        st.markdown(f"Best route: `{routes[0].to_dict()['path_str']}`")
+
+render_footer()

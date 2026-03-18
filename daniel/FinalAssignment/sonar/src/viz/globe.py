@@ -481,3 +481,84 @@ def make_corridor_heatmap(
         yaxis=dict(tickfont=dict(color="white"), autorange="reversed"),
     )
     return fig
+
+
+# ─── Radar chart for route comparison ────────────────────────────────────────
+
+def make_route_radar(routes: dict) -> go.Figure:
+    """
+    Build a radar (spider) chart comparing up to 3 routes across 5 dimensions.
+
+    Each axis is normalised to 0-100 where higher = better, so the chart is
+    intuitive: a larger polygon is a better route overall.
+
+    Parameters
+    ----------
+    routes : dict[str, Route]
+        Keys are criteria names (e.g. "most_resilient"), values are Route objects.
+    """
+    categories = ["Resilience", "Cost Efficiency", "Speed", "Simplicity", "Chokepoint Safety"]
+
+    # Collect raw values across all routes for normalisation
+    all_costs = [r.cost for r in routes.values()]
+    all_lt    = [r.lead_time_days for r in routes.values()]
+    all_hops  = [r.hops for r in routes.values()]
+    all_chk   = [r.chk_exposure for r in routes.values()]
+
+    max_cost = max(all_costs) if max(all_costs) > 0 else 1
+    max_lt   = max(all_lt)   if max(all_lt)   > 0 else 1
+    max_hops = max(all_hops) if max(all_hops) > 0 else 1
+    max_chk  = max(all_chk)  if max(all_chk)  > 0 else 1
+
+    fig = go.Figure()
+
+    for crit_key, r in routes.items():
+        label = CRITERIA_LABELS.get(crit_key, crit_key)
+        color = CRITERIA_COLORS.get(crit_key, "#ccc")
+
+        values = [
+            r.rs,                                         # Resilience: already 0-100
+            (1 - r.cost / max_cost) * 100 if max_cost > 0 else 100,  # Lower cost = better
+            (1 - r.lead_time_days / max_lt) * 100 if max_lt > 0 else 100,  # Fewer days = better
+            (1 - r.hops / max_hops) * 100 if max_hops > 0 else 100,  # Fewer hops = better
+            (1 - r.chk_exposure / max_chk) * 100 if max_chk > 0 else 100,  # Lower exposure = better
+        ]
+        # Close the polygon
+        values.append(values[0])
+
+        fig.add_trace(go.Scatterpolar(
+            r=values,
+            theta=categories + [categories[0]],
+            fill="toself",
+            fillcolor=f"rgba({int(color[1:3],16)},{int(color[3:5],16)},{int(color[5:7],16)},0.13)",
+            line=dict(color=color, width=2),
+            name=label,
+            hovertemplate=(
+                "<b>%{theta}</b><br>"
+                "Score: %{r:.1f}<extra></extra>"
+            ),
+        ))
+
+    fig.update_layout(
+        polar=dict(
+            bgcolor=COLORS["bg"],
+            radialaxis=dict(
+                visible=True, range=[0, 100],
+                gridcolor="#21262d", linecolor="#21262d",
+                tickfont=dict(color="#8B949E", size=10),
+            ),
+            angularaxis=dict(
+                gridcolor="#21262d", linecolor="#21262d",
+                tickfont=dict(color="#e6edf3", size=12),
+            ),
+        ),
+        paper_bgcolor=COLORS["paper"],
+        font=dict(color="#e6edf3"),
+        legend=dict(
+            font=dict(color="#e6edf3", size=12),
+            bgcolor="rgba(0,0,0,0)",
+        ),
+        margin=dict(l=60, r=60, t=40, b=40),
+        height=420,
+    )
+    return fig

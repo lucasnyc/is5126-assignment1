@@ -24,34 +24,12 @@ sys.path.insert(0, ROOT)
 from config import CHOKEPOINTS, CHOKEPOINT_WAYPOINTS, PRODUCT_NAMES, LATEST_YEAR
 from src.graph.routing import find_multi_criteria_routes, apply_scenario
 from src.graph.chokepoints import get_tariff_multipliers
-from src.viz.globe import make_multi_criteria_globe, make_resilience_gauge, CRITERIA_COLORS
+from src.viz.globe import make_multi_criteria_globe, make_resilience_gauge, make_route_radar, CRITERIA_COLORS
+from app.components.theme import inject_global_css, section_header, render_footer, wizard_step_indicator
 
 st.set_page_config(page_title="Route Explorer · SONAR", layout="wide", page_icon="🗺")
 
-st.markdown("""
-<style>
-.main{background:#0e1117}
-h1,h2,h3,p,label{color:#e6edf3!important}
-.stSidebar{background:#161b22}
-.route-card{
-    background:#161b22;border:1px solid #21262d;
-    border-radius:10px;padding:18px 16px;margin:4px 0;
-}
-.route-card h4{margin:0 0 10px 0;font-size:15px}
-.metric-big{font-size:26px;font-weight:700;margin:4px 0}
-.metric-label{font-size:11px;color:#8B949E;text-transform:uppercase;letter-spacing:.5px}
-.tag{display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600}
-@keyframes fadeSlideIn {
-    from { opacity: 0; transform: translateY(14px); }
-    to   { opacity: 1; transform: translateY(0);    }
-}
-.wiz-wrap { animation: fadeSlideIn 0.3s ease-out; }
-@keyframes slideIn {
-    from { opacity: 0; transform: translateX(24px); }
-    to   { opacity: 1; transform: translateX(0);    }
-}
-.turnstile-slide { animation: slideIn 0.25s ease-out; }
-</style>""", unsafe_allow_html=True)
+inject_global_css()
 
 # ── Guard: session state ───────────────────────────────────────────────────────
 if "graphs" not in st.session_state:
@@ -339,19 +317,14 @@ def _compute_persona(answers: dict, routes: dict) -> dict:
 
 # ── Wizard question renderer ───────────────────────────────────────────────────
 def _render_wizard_question(step: int, answers: dict) -> None:
-    q            = WIZARD_QUESTIONS[step]
-    progress_pct = int((step / N_QUESTIONS) * 100)
+    q = WIZARD_QUESTIONS[step]
 
-    # Animated header + progress bar
+    # Step indicator (numbered circles)
+    wizard_step_indicator(step, N_QUESTIONS)
+
+    # Animated question header
     st.markdown(
         f"""<div class="wiz-wrap">
-          <div style="font-size:11px;color:#58a6ff;text-transform:uppercase;
-                      letter-spacing:.06em;margin-bottom:10px">
-            Question {step + 1} of {N_QUESTIONS}
-          </div>
-          <div style="background:#21262d;border-radius:4px;height:3px;margin-bottom:20px">
-            <div style="background:#58a6ff;width:{progress_pct}%;height:3px;border-radius:4px"></div>
-          </div>
           <div style="font-size:17px;font-weight:600;color:#e6edf3;margin-bottom:5px">
             {q["title"]}
           </div>
@@ -668,37 +641,32 @@ st.session_state.setdefault("explorer_mode", None)   # None | "expert" | "guided
 # ── Mode selector ──────────────────────────────────────────────────────────────
 if st.session_state.explorer_mode is None:
     st.markdown("#### How would you like to explore routes?")
-    # Equal-height cards — both cards stretch to 200px so they always match regardless of text length
-    _card_style = (
-        "flex:1;height:200px;box-sizing:border-box;display:flex;flex-direction:column;"
-        "background:#161b22;border:1px solid #21262d;border-radius:10px;padding:24px 20px"
-    )
     st.markdown("".join([
         '<div style="display:flex;gap:16px;margin-bottom:16px">',
-        f'<div style="{_card_style}">',
-        '<div style="font-size:18px;font-weight:700;margin-bottom:10px">🔍 Expert View</div>',
-        '<div style="color:#8B949E;font-size:14px;line-height:1.6">',
-        'I know what I need. Show me all three optimised routes — ',
-        'cheapest, fastest, and most resilient — side by side with full metrics ',
-        'and a cost-of-certainty breakdown.',
-        '</div></div>',
-        f'<div style="{_card_style}">',
+        '<div class="mode-card" style="border-top:3px solid #27AE60">',
         '<div style="font-size:18px;font-weight:700;margin-bottom:10px">🧭 Guided Mode</div>',
         '<div style="color:#8B949E;font-size:14px;line-height:1.6">',
         'Help me choose. Answer four quick questions about your shipment — ',
         'profit margin, deadline, supply criticality, and cost sensitivity — ',
         "and I'll recommend the right route and show you exactly what trade-offs exist.",
         '</div></div>',
+        '<div class="mode-card" style="border-top:3px solid #4A90D9">',
+        '<div style="font-size:18px;font-weight:700;margin-bottom:10px">🔍 Expert View</div>',
+        '<div style="color:#8B949E;font-size:14px;line-height:1.6">',
+        'I know what I need. Show me all three optimised routes — ',
+        'cheapest, fastest, and most resilient — side by side with full metrics ',
+        'and a cost-of-certainty breakdown.',
+        '</div></div>',
         '</div>',
     ]), unsafe_allow_html=True)
     m1, m2 = st.columns(2)
     with m1:
-        if st.button("Show All Routes →", key="mode_expert", use_container_width=True):
-            st.session_state.explorer_mode = "expert"
-            st.rerun()
-    with m2:
         if st.button("Get My Recommendation →", key="mode_guided", type="primary", use_container_width=True):
             st.session_state.explorer_mode = "guided"
+            st.rerun()
+    with m2:
+        if st.button("Show All Routes →", key="mode_expert", use_container_width=True):
+            st.session_state.explorer_mode = "expert"
             st.rerun()
     st.stop()
 
@@ -707,7 +675,7 @@ if st.session_state.explorer_mode is None:
 # EXPERT MODE
 # ══════════════════════════════════════════════════════════════════════════════
 if st.session_state.explorer_mode == "expert":
-    st.markdown("### Route Comparison by Criterion")
+    section_header("🛡", "Route Comparison by Criterion", f"{origin} → {destination}")
 
     cols = st.columns(3)
     for col, (crit_key, crit_label, icon, color, highlight_label) in zip(cols, ALL_CARD_CONFIG):
@@ -722,7 +690,7 @@ if st.session_state.explorer_mode == "expert":
 
     # ── Globe — all three routes (below comparisons) ──────────────────────────
     st.markdown("---")
-    st.markdown("### 🌐 Route Map")
+    section_header("🌐", "Route Map")
     st.plotly_chart(globe_fig, use_container_width=True, config={"displayModeBar": False})
     if has_scenario:
         st.info(
@@ -732,16 +700,29 @@ if st.session_state.explorer_mode == "expert":
 
     # ── Cost of certainty ─────────────────────────────────────────────────────
     st.markdown("---")
-    st.markdown("### 💡 What does more certainty cost?")
+    section_header("💡", "What does more certainty cost?")
     st.caption(
         "Starting from the **Cheapest** route as your baseline, "
         "here is what you gain — and pay — by switching."
     )
     _render_cost_of_certainty(routes, base_key="cheapest")
 
-    # ── Summary table ─────────────────────────────────────────────────────────
+    # ── Radar chart ────────────────────────────────────────────────────────────
     st.markdown("---")
-    st.markdown("### Trade-off Summary")
+    section_header("🕸", "Route Comparison Radar")
+    st.caption(
+        "Each axis is normalised to 0\u2013100 (higher = better). "
+        "A larger polygon means a stronger route on that dimension."
+    )
+    st.plotly_chart(
+        make_route_radar(routes),
+        use_container_width=True,
+        config={"displayModeBar": False},
+    )
+
+    # ── Summary table + CSV export ────────────────────────────────────────────
+    st.markdown("---")
+    section_header("📋", "Trade-off Summary")
     summary_rows = []
     for crit_key, crit_label, icon, _, _ in ALL_CARD_CONFIG:
         r  = routes[crit_key]
@@ -755,7 +736,17 @@ if st.session_state.explorer_mode == "expert":
             "Chk Exposure":  f"{rd['chk_exposure']:.0%}",
             "RS Score":      round(r.rs, 1),
         })
-    st.dataframe(pd.DataFrame(summary_rows).set_index("Criterion"), use_container_width=True)
+    summary_df = pd.DataFrame(summary_rows).set_index("Criterion")
+    st.dataframe(summary_df, use_container_width=True)
+
+    st.download_button(
+        "Download as CSV",
+        data=summary_df.to_csv(),
+        file_name=f"sonar_routes_{origin}_{destination}.csv",
+        mime="text/csv",
+    )
+
+    render_footer()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -854,6 +845,11 @@ else:
                     f'← {prev_label}</div>',
                     unsafe_allow_html=True,
                 )
+            else:
+                st.markdown(
+                    '<div style="font-size:13px;margin-bottom:4px;visibility:hidden">&nbsp;</div>',
+                    unsafe_allow_html=True,
+                )
             if st.button("◀", key="ts_prev", use_container_width=True, disabled=prev_disabled):
                 st.session_state.turnstile_idx -= 1
                 st.rerun()
@@ -887,10 +883,13 @@ else:
             if not next_disabled:
                 next_label = _LABELS[turnstile_order[t_idx + 1]]
                 st.markdown(
-                    f'<div style="text-align:center;font-size:13px;color:#8B949E;margin-bottom:4px">'
-                    f'Next best alternative</div>'
                     f'<div style="text-align:center;font-size:13px;color:{CRITERIA_COLORS[turnstile_order[t_idx+1]]};'
                     f'font-weight:600;margin-bottom:4px">{next_label} →</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    '<div style="font-size:13px;margin-bottom:4px;visibility:hidden">&nbsp;</div>',
                     unsafe_allow_html=True,
                 )
             if st.button("▶", key="ts_next", use_container_width=True, disabled=next_disabled):
@@ -899,7 +898,7 @@ else:
 
         # ── Globe — single route for current turnstile position ────────────────
         st.markdown("---")
-        st.markdown("### 🌐 Route Map")
+        section_header("🌐", "Route Map")
         _guided_globe_cache = st.session_state.setdefault("_re_guided_globe_cache", {})
         _gk = (_cache_key, t_key)
         if _gk not in _guided_globe_cache:
@@ -916,16 +915,29 @@ else:
 
         # ── Cost of certainty — alternatives ──────────────────────────────────
         st.markdown("---")
-        st.markdown("### 💡 What does switching cost?")
+        section_header("💡", "What does switching cost?")
         st.caption(
             f"Starting from your recommended **{_LABELS[rec_key]}** route, "
             "here is exactly what you gain — and pay — by choosing a different option."
         )
         _render_cost_of_certainty(routes, base_key=rec_key)
 
-        # ── Summary table ──────────────────────────────────────────────────────
+        # ── Radar chart ────────────────────────────────────────────────────────
         st.markdown("---")
-        st.markdown("### Trade-off Summary")
+        section_header("🕸", "Route Comparison Radar")
+        st.caption(
+            "Each axis is normalised to 0\u2013100 (higher = better). "
+            "A larger polygon means a stronger route on that dimension."
+        )
+        st.plotly_chart(
+            make_route_radar(routes),
+            use_container_width=True,
+            config={"displayModeBar": False},
+        )
+
+        # ── Summary table + CSV export ────────────────────────────────────────
+        st.markdown("---")
+        section_header("📋", "Trade-off Summary")
         summary_rows = []
         for crit_key, crit_label, icon, _, _ in ALL_CARD_CONFIG:
             r  = routes[crit_key]
@@ -937,13 +949,23 @@ else:
                 "Freight Cost":  f"{r.cost * 100:.2f}%",
                 "Lead Time (d)": r.lead_time_days,
                 "RS Score":      round(r.rs, 1),
-                "Within Margin": "✓" if v["viable"] else f"✗ ({v['freight_pct']:.1f}% > {persona_result['margin']}%)",
+                "Within Margin": "\u2713" if v["viable"] else f"\u2717 ({v['freight_pct']:.1f}% > {persona_result['margin']}%)",
             }
             if persona_result["deadline_days"]:
                 row["Meets Deadline"] = (
-                    "✓" if persona_result["deadline_ok"][crit_key]
-                    else f"✗ ({r.lead_time_days:.0f}d > {persona_result['deadline_days']}d)"
+                    "\u2713" if persona_result["deadline_ok"][crit_key]
+                    else f"\u2717 ({r.lead_time_days:.0f}d > {persona_result['deadline_days']}d)"
                 )
             summary_rows.append(row)
-        st.dataframe(pd.DataFrame(summary_rows).set_index("Criterion"), use_container_width=True)
+        guided_df = pd.DataFrame(summary_rows).set_index("Criterion")
+        st.dataframe(guided_df, use_container_width=True)
+
+        st.download_button(
+            "Download as CSV",
+            data=guided_df.to_csv(),
+            file_name=f"sonar_routes_{origin}_{destination}.csv",
+            mime="text/csv",
+        )
+
+        render_footer()
 
