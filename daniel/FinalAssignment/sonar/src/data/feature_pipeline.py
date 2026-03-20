@@ -213,10 +213,32 @@ def build_features(save: bool = True) -> pd.DataFrame:
     )
     median_lsci = float(df.loc[df["origin_lsci"] > 0, "origin_lsci"].median())
 
+    # TEU 95th percentile for Port Health normalization
+    teu_p95 = float(
+        df.loc[df["origin_teu"] > 0, "origin_teu"].quantile(0.95)
+    )
+
+    # Weather and disruption medians (for countries not in the datasets)
+    weather_data    = data.get("weather_severity")
+    disruption_data = data.get("disruption_metrics")
+    weather_severity_median = float(
+        weather_data["weather_severity"].median()
+    ) if weather_data is not None and len(weather_data) > 0 else 0.10
+    rel_median = float(
+        disruption_data["otd_rate"].median()
+    ) if disruption_data is not None and len(disruption_data) > 0 else 0.87
+    sec_median_gri = float(
+        disruption_data["mean_gri"].median()
+    ) if disruption_data is not None and len(disruption_data) > 0 else 0.50
+
     constants = {
-        "bilateral_lsci_p95": bilateral_lsci_p95,
-        "median_fleet_pct":   median_fleet_pct,
-        "median_lsci":        median_lsci,
+        "bilateral_lsci_p95":     bilateral_lsci_p95,
+        "median_fleet_pct":       median_fleet_pct,
+        "median_lsci":            median_lsci,
+        "teu_p95":                teu_p95,
+        "weather_severity_median": weather_severity_median,
+        "rel_median":             rel_median,
+        "sec_median_gri":         sec_median_gri,
     }
     if save:
         os.makedirs(ARTIFACTS_DIR, exist_ok=True)

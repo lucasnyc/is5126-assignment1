@@ -512,6 +512,7 @@ def find_multi_criteria_routes(
         "cheapest":       cheapest,
         "fastest":        fastest,
         "most_resilient": most_resilient,
+        "_candidates":    candidates,   # full scored pool for downstream filtering
     }
 
 

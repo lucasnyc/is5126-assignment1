@@ -497,17 +497,15 @@ def make_route_radar(routes: dict) -> go.Figure:
     routes : dict[str, Route]
         Keys are criteria names (e.g. "most_resilient"), values are Route objects.
     """
-    categories = ["Resilience", "Cost Efficiency", "Speed", "Simplicity", "Chokepoint Safety"]
+    categories = ["Resilience", "Cost Efficiency", "Speed", "On-Time Reliability", "Chokepoint Safety"]
 
     # Collect raw values across all routes for normalisation
     all_costs = [r.cost for r in routes.values()]
     all_lt    = [r.lead_time_days for r in routes.values()]
-    all_hops  = [r.hops for r in routes.values()]
     all_chk   = [r.chk_exposure for r in routes.values()]
 
     max_cost = max(all_costs) if max(all_costs) > 0 else 1
     max_lt   = max(all_lt)   if max(all_lt)   > 0 else 1
-    max_hops = max(all_hops) if max(all_hops) > 0 else 1
     max_chk  = max(all_chk)  if max(all_chk)  > 0 else 1
 
     fig = go.Figure()
@@ -516,12 +514,16 @@ def make_route_radar(routes: dict) -> go.Figure:
         label = CRITERIA_LABELS.get(crit_key, crit_key)
         color = CRITERIA_COLORS.get(crit_key, "#ccc")
 
+        # On-Time Reliability: rel component from RS detail (0→100).
+        # Falls back to 50 if rs_detail is not available.
+        rel_score = getattr(r, "rs_detail", {}).get("rel", 0.5) * 100
+
         values = [
-            r.rs,                                         # Resilience: already 0-100
-            (1 - r.cost / max_cost) * 100 if max_cost > 0 else 100,  # Lower cost = better
-            (1 - r.lead_time_days / max_lt) * 100 if max_lt > 0 else 100,  # Fewer days = better
-            (1 - r.hops / max_hops) * 100 if max_hops > 0 else 100,  # Fewer hops = better
-            (1 - r.chk_exposure / max_chk) * 100 if max_chk > 0 else 100,  # Lower exposure = better
+            r.rs,                                                               # Resilience (0–100)
+            (1 - r.cost / max_cost) * 100 if max_cost > 0 else 100,           # Cost Efficiency
+            (1 - r.lead_time_days / max_lt) * 100 if max_lt > 0 else 100,     # Speed
+            rel_score,                                                          # On-Time Reliability
+            (1 - r.chk_exposure / max_chk) * 100 if max_chk > 0 else 100,     # Chokepoint Safety
         ]
         # Close the polygon
         values.append(values[0])

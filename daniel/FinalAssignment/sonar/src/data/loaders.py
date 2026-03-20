@@ -9,7 +9,10 @@ import sys
 import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-from config import RAW_FILES, NAME_CANONICAL, YEARS
+from config import (
+    RAW_FILES, NAME_CANONICAL, YEARS,
+    CITY_COUNTRY_MAP, WEATHER_SEVERITY_MAP, WEATHER_SEVERITY_DEFAULT,
+)
 
 
 def _normalize_country(series: pd.Series) -> pd.Series:
@@ -243,16 +246,99 @@ def load_vessel_pct() -> pd.DataFrame:
     return df
 
 
+# ─── 8. Weather severity (per country) ────────────────────────────────────────
+
+def load_weather_severity() -> pd.DataFrame:
+    """
+    Per-country mean weather severity from daily weather observations.
+    Columns: country, weather_severity (float 0-1, higher = worse weather)
+
+    Source: country_date_conditions.csv (129K rows, 211 countries, 669 dates).
+    Each condition string is mapped to a numeric severity via WEATHER_SEVERITY_MAP.
+    """
+    df = pd.read_csv(RAW_FILES["weather"])
+    df["severity"] = df["condition_text"].map(WEATHER_SEVERITY_MAP).fillna(
+        WEATHER_SEVERITY_DEFAULT
+    )
+    result = (
+        df.groupby("country")["severity"]
+        .mean()
+        .reset_index()
+        .rename(columns={"severity": "weather_severity"})
+    )
+    result["country"] = _normalize_country(result["country"])
+    return result
+
+
+# ─── 9. Disruption metrics (per country) ─────────────────────────────────────
+
+def load_disruption_metrics() -> pd.DataFrame:
+    """
+    Per-country disruption metrics derived from shipment-level data.
+    Columns: country, otd_rate, delay_cv, congestion_rate, geo_conflict_rate, mean_gri
+
+    Source: global_supply_chain_disruption_v1.csv (10K shipments, 6 OD pairs).
+    Cities are mapped to countries via CITY_COUNTRY_MAP, then metrics are
+    aggregated per country (appearing as either origin or destination).
+    """
+    df = pd.read_csv(RAW_FILES["disruption"])
+
+    # Map cities to countries
+    df["origin_country"] = df["Origin_City"].map(CITY_COUNTRY_MAP)
+    df["dest_country"]   = df["Destination_City"].map(CITY_COUNTRY_MAP)
+
+    # Stack origin and destination into a single "country" column
+    # so each shipment contributes to both endpoints
+    origin_df = df.rename(columns={"origin_country": "country"})
+    dest_df   = df.rename(columns={"dest_country":   "country"})
+    stacked   = pd.concat([
+        origin_df[["country", "Delivery_Status", "Delay_Days",
+                   "Disruption_Event", "Geopolitical_Risk_Index"]],
+        dest_df[["country", "Delivery_Status", "Delay_Days",
+                 "Disruption_Event", "Geopolitical_Risk_Index"]],
+    ], ignore_index=True)
+
+    # Drop rows with unmapped cities
+    stacked = stacked.dropna(subset=["country"])
+
+    def _agg(group):
+        n = len(group)
+        otd_rate = (group["Delivery_Status"] == "On Time").sum() / n
+        # Normalize mean delay against a 10-day benchmark (max expected delay)
+        mean_delay_norm = min(group["Delay_Days"].mean() / 10.0, 1.0)
+
+        congestion_rate = (
+            (group["Disruption_Event"] == "Port Congestion").sum() / n
+        )
+        geo_conflict_rate = (
+            (group["Disruption_Event"] == "Geopolitical Conflict (Route Diversion)").sum() / n
+        )
+        mean_gri = group["Geopolitical_Risk_Index"].mean()
+
+        return pd.Series({
+            "otd_rate":            otd_rate,
+            "mean_delay_norm":     mean_delay_norm,
+            "congestion_rate":     congestion_rate,
+            "geo_conflict_rate":   geo_conflict_rate,
+            "mean_gri":            mean_gri,
+        })
+
+    result = stacked.groupby("country").apply(_agg, include_groups=False).reset_index()
+    return result
+
+
 # ─── Convenience: load all ────────────────────────────────────────────────────
 
 def load_all() -> dict:
     """Load and return all datasets as a dict of DataFrames."""
     return {
-        "transport_cost":  load_transport_cost(),
-        "bilateral_lsci":  load_bilateral_lsci(),
-        "country_lsci":    load_country_lsci(),
-        "port_throughput": load_port_throughput(),
-        "merchant_fleet":  load_merchant_fleet(),
-        "seaborne_trade":  load_seaborne_trade(),
-        "vessel_pct":      load_vessel_pct(),
+        "transport_cost":      load_transport_cost(),
+        "bilateral_lsci":      load_bilateral_lsci(),
+        "country_lsci":        load_country_lsci(),
+        "port_throughput":     load_port_throughput(),
+        "merchant_fleet":      load_merchant_fleet(),
+        "seaborne_trade":      load_seaborne_trade(),
+        "vessel_pct":          load_vessel_pct(),
+        "weather_severity":    load_weather_severity(),
+        "disruption_metrics":  load_disruption_metrics(),
     }

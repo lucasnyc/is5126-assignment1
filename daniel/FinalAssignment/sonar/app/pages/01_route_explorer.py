@@ -51,7 +51,7 @@ with st.sidebar:
     )
     destination = st.selectbox(
         "Destination Country", ALL_COUNTRIES,
-        index=ALL_COUNTRIES.index("Germany") if "Germany" in ALL_COUNTRIES else 1,
+        index=ALL_COUNTRIES.index("United States") if "United States" in ALL_COUNTRIES else 1,
     )
     product_label = st.selectbox("Product", list(PRODUCT_NAMES.values()))
     product_code  = [k for k, v in PRODUCT_NAMES.items() if v == product_label][0]
@@ -132,7 +132,7 @@ routes = _routes_cache[_cache_key]
 # ── Globe ─────────────────────────────────────────────────────────────────────
 _globe_cache = st.session_state.setdefault("_re_globe_cache", {})
 if _cache_key not in _globe_cache:
-    criteria_dicts = {k: r.to_dict() for k, r in routes.items()}
+    criteria_dicts = {k: r.to_dict() for k, r in routes.items() if not k.startswith("_")}
     _globe_cache[_cache_key] = (
         criteria_dicts,
         make_multi_criteria_globe(criteria_routes=criteria_dicts, blocked_chokepoints=blocked),
@@ -151,8 +151,33 @@ st.session_state.setdefault("wiz_answers",   {})
 st.session_state.setdefault("wiz_done",      False)
 st.session_state.setdefault("turnstile_idx", 0)    # 0 = recommended route
 
+def _fmt_usd(amount: float) -> str:
+    """Format a USD amount as a compact human-readable string."""
+    if amount >= 1_000_000:
+        s = f"${amount / 1_000_000:.2f}M"
+        # trim trailing zeros: $1.20M → $1.2M, $1.00M → $1M
+        s = s.rstrip("0").rstrip(".")
+        if "." not in s:
+            s = s.replace("M", ".0M")  # keep one decimal for readability
+        return s
+    elif amount >= 1_000:
+        return f"${amount / 1_000:.0f}K"
+    return f"${amount:,.0f}"
+
+
 # ── Wizard question definitions ────────────────────────────────────────────────
 WIZARD_QUESTIONS = [
+    {
+        "id":      "shipment_value",
+        "title":   "What is the total value of this shipment (USD)?",
+        "caption": (
+            "Enter the approximate cargo value. "
+            "We'll convert freight cost percentages into actual dollar amounts "
+            "so you can see the real financial impact of each route."
+        ),
+        "type":    "number_input",
+        "min":     0, "max": 1_000_000_000, "default": 1_000_000, "step": 100_000,
+    },
     {
         "id":      "margin",
         "title":   "What is your expected gross profit margin on this shipment?",
@@ -304,14 +329,15 @@ def _compute_persona(answers: dict, routes: dict) -> dict:
             )
 
     return {
-        "persona_name": persona_name,
-        "story":        story,
-        "rec_key":      rec_key,
-        "viability":    viability,
-        "deadline_ok":  deadline_ok,
-        "warnings":     warnings,
-        "margin":       margin,
-        "deadline_days": deadline_days,
+        "persona_name":    persona_name,
+        "story":           story,
+        "rec_key":         rec_key,
+        "viability":       viability,
+        "deadline_ok":     deadline_ok,
+        "warnings":        warnings,
+        "margin":          margin,
+        "deadline_days":   deadline_days,
+        "shipment_value":  answers.get("shipment_value", 0),
     }
 
 
@@ -378,6 +404,18 @@ def _render_wizard_question(step: int, answers: dict) -> None:
             label_visibility="collapsed",
         )
 
+    elif q["type"] == "number_input":
+        val = st.number_input(
+            q["id"],
+            min_value=q["min"], max_value=q["max"],
+            value=int(answers.get(q["id"], q["default"])),
+            step=q["step"],
+            format="%d",
+            key=f"wiz_input_{step}",
+            label_visibility="collapsed",
+        )
+        st.caption(f"Entered: **{_fmt_usd(val)}**")
+
     # Navigation buttons
     st.write("")
     col_back, col_space, col_next = st.columns([1, 4, 1])
@@ -420,7 +458,8 @@ def _rs_color(rs: float) -> str:
 
 
 def _route_card_html(crit_key: str, crit_label: str, icon: str, color: str,
-                     highlight_label: str, r, is_rec: bool = False) -> str:
+                     highlight_label: str, r, is_rec: bool = False,
+                     shipment_usd: float = 0) -> str:
     """Build route card HTML as a flat joined list — no embedded newlines that could
     terminate Streamlit's markdown HTML block parser prematurely."""
     rs = r.rs
@@ -428,7 +467,8 @@ def _route_card_html(crit_key: str, crit_label: str, icon: str, color: str,
     if crit_key == "most_resilient":
         hval = f"{rs:.1f} / 100"
     elif crit_key == "cheapest":
-        hval = f"{r.cost * 100:.2f}%"
+        usd_part = f'<span style="font-size:1rem;color:#8B949E"> ({_fmt_usd(r.cost * shipment_usd)})</span>' if shipment_usd > 0 else ""
+        hval = f"{r.cost * 100:.2f}%{usd_part}"
     else:
         hval = f"{r.lead_time_days:.0f} days"
     border = f"border-top:3px solid {color}" + (f";box-shadow:0 0 16px {color}55" if is_rec else "")
@@ -451,7 +491,9 @@ def _route_card_html(crit_key: str, crit_label: str, icon: str, color: str,
         f'<span style="font-size:0.7rem;color:#aaa"> / 100</span></div>',
         '</div><div>',
         '<div style="font-size:0.65rem;color:#aaa;text-transform:uppercase;letter-spacing:.05em">Freight Cost</div>',
-        f'<div style="font-size:1rem;font-weight:600;color:#ccc">{r.cost * 100:.2f}%</div>',
+        f'<div style="font-size:1rem;font-weight:600;color:#ccc">{r.cost * 100:.2f}%'
+        + (f'<span style="font-size:0.8rem;color:#8B949E"> ({_fmt_usd(r.cost * shipment_usd)})</span>' if shipment_usd > 0 else "")
+        + '</div>',
         '</div><div>',
         '<div style="font-size:0.65rem;color:#aaa;text-transform:uppercase;letter-spacing:.05em">Lead Time</div>',
         f'<div style="font-size:1rem;font-weight:600;color:#ccc">{r.lead_time_days:.0f}'
@@ -461,12 +503,14 @@ def _route_card_html(crit_key: str, crit_label: str, icon: str, color: str,
 
 
 def _render_route_details(crit_key: str, crit_label: str, r, rd: dict,
-                          persona_result: dict | None = None) -> None:
+                          persona_result: dict | None = None,
+                          shipment_usd: float = 0) -> None:
     """Render path + metrics table + gauge + RS breakdown (call inside the target column/container)."""
     st.markdown(f"**Path** ({r.hops} hop{'s' if r.hops != 1 else ''})")
     st.markdown(" → ".join(f"`{c}`" for c in r.path))
+    freight_str = f"{r.cost * 100:.2f}%" + (f" ({_fmt_usd(r.cost * shipment_usd)})" if shipment_usd > 0 else "")
     rows = [
-        {"Metric": "Freight Cost",    "Value": f"{r.cost * 100:.2f}%"},
+        {"Metric": "Freight Cost",    "Value": freight_str},
         {"Metric": "Lead Time",       "Value": f"{r.lead_time_days:.0f} d"},
         {"Metric": "Hops",            "Value": str(r.hops)},
         {"Metric": "Chokepoint Exp.", "Value": f"{rd['chk_exposure']:.0%}"},
@@ -503,7 +547,7 @@ def _render_cost_of_certainty(routes: dict, base_key: str) -> None:
     Shows the cost/benefit of switching from the base route to each alternative.
     """
     base = routes[base_key]
-    others = [k for k in ["most_resilient", "cheapest", "fastest"] if k != base_key]
+    others = [k for k in ["most_resilient", "cheapest", "fastest"] if k != base_key and k in routes]
 
     cols = st.columns(len(others))
     for col, alt_key in zip(cols, others):
@@ -582,16 +626,18 @@ def _chatbot_message(answers: dict, persona_result: dict, routes: dict) -> str:
     else:
         ctx.append("moderate cost sensitivity")
 
-    path_str    = " → ".join(rec_route.path)
-    freight     = rec_route.cost * 100
-    lt          = int(rec_route.lead_time_days)
-    rs          = rec_route.rs
-    margin_note = "well within" if freight < margin * 0.75 else "within"
+    path_str      = " → ".join(rec_route.path)
+    freight       = rec_route.cost * 100
+    lt            = int(rec_route.lead_time_days)
+    rs            = rec_route.rs
+    margin_note   = "well within" if freight < margin * 0.75 else "within"
+    shipment_usd  = answers.get("shipment_value", 0)
+    usd_note      = f" ({_fmt_usd(rec_route.cost * shipment_usd)})" if shipment_usd > 0 else ""
 
     return (
         f"Based on your requirements — {', '.join(ctx)} — "
         f"I recommend the **{rec_label}** route: **{path_str}**. "
-        f"At **{freight:.1f}%** freight cost it's {margin_note} your {margin}% margin, "
+        f"At **{freight:.1f}%{usd_note}** freight cost it's {margin_note} your {margin}% margin, "
         f"with a resilience score of **{rs:.0f}/100** and an estimated **{lt}-day** lead time."
     )
 
@@ -675,7 +721,13 @@ if st.session_state.explorer_mode is None:
 # EXPERT MODE
 # ══════════════════════════════════════════════════════════════════════════════
 if st.session_state.explorer_mode == "expert":
-    section_header("🛡", "Route Comparison by Criterion", f"{origin} → {destination}")
+    st.plotly_chart(
+        make_route_radar({k: v for k, v in routes.items() if not k.startswith("_")}),
+        use_container_width=True,
+        config={"displayModeBar": False},
+    )
+
+    st.markdown("---")
 
     cols = st.columns(3)
     for col, (crit_key, crit_label, icon, color, highlight_label) in zip(cols, ALL_CARD_CONFIG):
@@ -706,19 +758,6 @@ if st.session_state.explorer_mode == "expert":
         "here is what you gain — and pay — by switching."
     )
     _render_cost_of_certainty(routes, base_key="cheapest")
-
-    # ── Radar chart ────────────────────────────────────────────────────────────
-    st.markdown("---")
-    section_header("🕸", "Route Comparison Radar")
-    st.caption(
-        "Each axis is normalised to 0\u2013100 (higher = better). "
-        "A larger polygon means a stronger route on that dimension."
-    )
-    st.plotly_chart(
-        make_route_radar(routes),
-        use_container_width=True,
-        config={"displayModeBar": False},
-    )
 
     # ── Summary table + CSV export ────────────────────────────────────────────
     st.markdown("---")
@@ -764,26 +803,67 @@ else:
 
     # ── Wizard complete — show personalised recommendation + turnstile ─────────
     else:
-        persona_result = _compute_persona(st.session_state.wiz_answers, routes)
+        # ── Filter candidate pool to only routes within user requirements ──────
+        margin_pct        = st.session_state.wiz_answers.get("margin", 20)
+        deadline_days_req = st.session_state.wiz_answers.get("deadline_days")
+        all_candidates    = routes.get("_candidates", [])
+
+        viable = [
+            r for r in all_candidates
+            if (r.cost * 100 <= margin_pct)
+            and (deadline_days_req is None or r.lead_time_days <= deadline_days_req)
+        ]
+
+        if viable:
+            guided_routes = {
+                "cheapest":       min(viable, key=lambda r: r.cost),
+                "fastest":        min(viable, key=lambda r: r.lead_time_days),
+                "most_resilient": max(viable, key=lambda r: r.rs),
+            }
+            _no_viable = False
+        else:
+            _no_viable    = True
+            guided_routes = {k: v for k, v in routes.items() if not k.startswith("_")}
+
+        # Deduplicate: same path can be best for multiple criteria → show once
+        _seen_paths: dict[tuple, str] = {}
+        guided_crit_keys: list[str]   = []
+        for ck in ["most_resilient", "cheapest", "fastest"]:
+            pk = tuple(guided_routes[ck].path)
+            if pk not in _seen_paths:
+                _seen_paths[pk] = ck
+                guided_crit_keys.append(ck)
+
+        guided_criteria_dicts = {k: guided_routes[k].to_dict() for k in guided_crit_keys}
+
+        persona_result = _compute_persona(st.session_state.wiz_answers, guided_routes)
         rec_key        = persona_result["rec_key"]
-        rec_color      = CRITERIA_COLORS[rec_key]
-        alt_keys       = [k for k in ["most_resilient", "cheapest", "fastest"] if k != rec_key]
+        if rec_key not in guided_crit_keys:
+            rec_key = guided_crit_keys[0]
+        rec_color = CRITERIA_COLORS[rec_key]
 
         # Turnstile order: recommended first, then alternatives
-        turnstile_order = [rec_key] + alt_keys
+        turnstile_order = [rec_key] + [k for k in guided_crit_keys if k != rec_key]
 
         # Clamp turnstile_idx in case routes changed
         t_idx = min(st.session_state.turnstile_idx, len(turnstile_order) - 1)
         st.session_state.turnstile_idx = t_idx
         t_key   = turnstile_order[t_idx]
-        t_r     = routes[t_key]
-        t_rd    = criteria_dicts[t_key]
+        t_r     = guided_routes[t_key]
+        t_rd    = guided_criteria_dicts[t_key]
         t_color = CRITERIA_COLORS[t_key]
         t_label = _LABELS[t_key]
         t_icon  = _ICONS[t_key]
         t_hl    = {"most_resilient": "Resilience Score", "cheapest": "Freight Cost", "fastest": "Lead Time"}[t_key]
 
         # ── Chatbot message bar ────────────────────────────────────────────────
+        if _no_viable:
+            st.warning(
+                f"No routes found within your requirements "
+                f"(margin ≤ {margin_pct}%"
+                + (f", deadline ≤ {deadline_days_req}d" if deadline_days_req else "")
+                + "). Showing the best available options — consider adjusting your requirements."
+            )
         with st.container(border=True):
             msg_col, edit_col = st.columns([6, 1])
             with msg_col:
@@ -792,7 +872,7 @@ else:
                     'letter-spacing:.06em;margin-bottom:6px">Route Advisor</div>',
                     unsafe_allow_html=True,
                 )
-                st.markdown(_chatbot_message(st.session_state.wiz_answers, persona_result, routes))
+                st.markdown(_chatbot_message(st.session_state.wiz_answers, persona_result, guided_routes))
             with edit_col:
                 st.write("")
                 if st.button("✏️ Edit", key="wiz_reset", use_container_width=True):
@@ -803,6 +883,13 @@ else:
 
         for w in persona_result["warnings"]:
             st.warning(w)
+
+        # ── Radar chart — between advisor and route boxes ──────────────────────
+        st.plotly_chart(
+            make_route_radar(guided_routes),
+            use_container_width=True,
+            config={"displayModeBar": False},
+        )
 
         # ── Turnstile carousel ─────────────────────────────────────────────────
         st.markdown("---")
@@ -831,7 +918,7 @@ else:
         _ts_l, _ts_c, _ts_r = st.columns([2, 6, 2])
 
         # Pre-compute why text so both columns can reference it
-        why_text = _why_this_route(t_key, t_idx, rec_key, persona_result, routes)
+        why_text = _why_this_route(t_key, t_idx, rec_key, persona_result, guided_routes)
         why_html_body = re.sub(r'\*\*(.+?)\*\*', r'<strong style="color:#e6edf3">\1</strong>', why_text)
 
         with _ts_l:
@@ -856,9 +943,11 @@ else:
 
         with _ts_c:
             # Route card
+            _shipment_usd = persona_result.get("shipment_value", 0)
             st.markdown(
                 f'<div class="turnstile-slide">'
-                + _route_card_html(t_key, t_label, t_icon, t_color, t_hl, t_r, is_rec=is_rec_pos)
+                + _route_card_html(t_key, t_label, t_icon, t_color, t_hl, t_r,
+                                   is_rec=is_rec_pos, shipment_usd=_shipment_usd)
                 + '</div>',
                 unsafe_allow_html=True,
             )
@@ -875,7 +964,8 @@ else:
                 unsafe_allow_html=True,
             )
             # Full route details
-            _render_route_details(t_key, t_label, t_r, t_rd, persona_result)
+            _render_route_details(t_key, t_label, t_r, t_rd, persona_result,
+                                  shipment_usd=_shipment_usd)
 
         with _ts_r:
             st.markdown('<div style="height:130px"></div>', unsafe_allow_html=True)
@@ -903,7 +993,7 @@ else:
         _gk = (_cache_key, t_key)
         if _gk not in _guided_globe_cache:
             _guided_globe_cache[_gk] = make_multi_criteria_globe(
-                criteria_routes={t_key: criteria_dicts[t_key]},
+                criteria_routes={t_key: guided_criteria_dicts[t_key]},
                 blocked_chokepoints=blocked,
             )
         st.plotly_chart(_guided_globe_cache[_gk], use_container_width=True, config={"displayModeBar": False})
@@ -920,33 +1010,24 @@ else:
             f"Starting from your recommended **{_LABELS[rec_key]}** route, "
             "here is exactly what you gain — and pay — by choosing a different option."
         )
-        _render_cost_of_certainty(routes, base_key=rec_key)
-
-        # ── Radar chart ────────────────────────────────────────────────────────
-        st.markdown("---")
-        section_header("🕸", "Route Comparison Radar")
-        st.caption(
-            "Each axis is normalised to 0\u2013100 (higher = better). "
-            "A larger polygon means a stronger route on that dimension."
-        )
-        st.plotly_chart(
-            make_route_radar(routes),
-            use_container_width=True,
-            config={"displayModeBar": False},
-        )
+        _render_cost_of_certainty(guided_routes, base_key=rec_key)
 
         # ── Summary table + CSV export ────────────────────────────────────────
         st.markdown("---")
         section_header("📋", "Trade-off Summary")
         summary_rows = []
-        for crit_key, crit_label, icon, _, _ in ALL_CARD_CONFIG:
-            r  = routes[crit_key]
-            rd = criteria_dicts[crit_key]
-            v  = persona_result["viability"][crit_key]
+        _sv = persona_result.get("shipment_value", 0)
+        for crit_key in guided_crit_keys:
+            crit_label = _LABELS[crit_key]
+            icon       = _ICONS[crit_key]
+            r          = guided_routes[crit_key]
+            rd         = guided_criteria_dicts[crit_key]
+            v          = persona_result["viability"][crit_key]
+            freight_cost_str = f"{r.cost * 100:.2f}%" + (f" ({_fmt_usd(r.cost * _sv)})" if _sv > 0 else "")
             row = {
                 "Criterion":     f"{icon} {crit_label}",
                 "Route":         " → ".join(r.path),
-                "Freight Cost":  f"{r.cost * 100:.2f}%",
+                "Freight Cost":  freight_cost_str,
                 "Lead Time (d)": r.lead_time_days,
                 "RS Score":      round(r.rs, 1),
                 "Within Margin": "\u2713" if v["viable"] else f"\u2717 ({v['freight_pct']:.1f}% > {persona_result['margin']}%)",

@@ -237,21 +237,28 @@ if gkey in graphs:
             unsafe_allow_html=True,
         )
 
+        _comp_colors = {
+            "Delivery Confidence": "#4A90D9",
+            "Backup Options":      "#27AE60",
+            "Weather Safety":      "#F39C12",
+            "Port Health":         "#9B59B6",
+            "Security Level":      "#E74C3C",
+        }
         fig_bar = go.Figure(go.Bar(
             x=list(comp.keys()),
             y=list(comp.values()),
-            marker_color=["#4A90D9", "#27AE60", "#F39C12", "#9B59B6"],
+            marker_color=[_comp_colors.get(k, "#8B949E") for k in comp.keys()],
             text=[f"{v:.1f}" for v in comp.values()],
             textposition="outside",
             textfont=dict(color="white"),
         ))
         fig_bar.update_layout(
             title=f"RS Components: {chosen_corridor} ({chosen_product})",
-            yaxis_title="Contribution (pts, max=47/28/17/7)",
+            yaxis_title="Contribution (pts, max=37/21/21/11/10)",
             paper_bgcolor=COLORS["paper"],
             plot_bgcolor=COLORS["paper"],
             font=dict(color="white"),
-            yaxis=dict(range=[0, 52], gridcolor="#21262d"),
+            yaxis=dict(range=[0, 42], gridcolor="#21262d"),
             xaxis=dict(gridcolor="#21262d"),
             height=350,
         )

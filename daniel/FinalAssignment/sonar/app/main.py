@@ -198,8 +198,17 @@ st.markdown("""
         <div class="nav-title">Resilience Analysis</div>
         <div class="nav-desc">
             Heatmap view of resilience scores across the top 20 global trade corridors
-            and 5 product categories. Drill down into AHP score components —
-            route alternatives, chokepoint avoidance, bilateral connectivity, and fleet availability.
+            and 5 product categories. Drill down into all 5 score components —
+            Delivery Confidence, Backup Options, Weather Safety, Port Health, and Security Level.
+        </div>
+    </div>
+    <div class="nav-card" style="border-top:3px solid #9B59B6">
+        <div class="nav-icon">🛡</div>
+        <div class="nav-title">Resilience Score</div>
+        <div class="nav-desc">
+            Full explanation of the 5-factor AHP-weighted resilience model.
+            Understand how each factor is calculated, why the weights were chosen,
+            and how to interpret scores for any corridor.
         </div>
     </div>
     <div class="nav-card" style="border-top:3px solid #F5A623">
@@ -232,8 +241,8 @@ _steps = [
      "Applies chokepoint closures and tariff multipliers in real-time — reroutes around "
      "blocked nodes and reprices affected edges instantly."),
     ("5", "Resilience Score", "#9B59B6",
-     "A 0\u2013100 composite index via AHP (Saaty 1980): "
-     "RS = 100 \u00d7 (0.47\u00b7Alt + 0.28\u00b7Chk + 0.17\u00b7Bil + 0.07\u00b7Fleet), CR = 0.019."),
+     "A 0\u2013100 composite index via AHP-TOPSIS (Saaty 1980): "
+     "RS = 100 \u00d7 (0.37\u00b7Rel + 0.21\u00b7Flex + 0.21\u00b7Env + 0.11\u00b7Port + 0.10\u00b7Sec), CR = 0.003."),
 ]
 
 cols = st.columns(5)
