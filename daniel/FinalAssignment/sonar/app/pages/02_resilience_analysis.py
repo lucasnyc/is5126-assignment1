@@ -17,7 +17,9 @@ import networkx as nx
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
 sys.path.insert(0, ROOT)
 
-from config import PRODUCT_NAMES, PRODUCT_CODES, LATEST_YEAR, CHOKEPOINTS, TOP_CORRIDORS
+import plotly.express as px
+
+from config import PRODUCT_NAMES, PRODUCT_CODES, LATEST_YEAR, CHOKEPOINTS, TOP_CORRIDORS, RS_TIER_HIGH, COST_TIER_MED
 from src.graph.routing import find_k_routes, apply_scenario
 from src.graph.chokepoints import get_tariff_multipliers
 from src.viz.globe import make_corridor_heatmap, COLORS
@@ -117,13 +119,157 @@ if not data:
     st.warning("No data available for the selected configuration.")
     st.stop()
 
-# ─── Heatmap ─────────────────────────────────────────────────────────────────
-section_header("\U0001f5fa", "Resilience Heatmap", f"Top {n_corridors} corridors \u00b7 {year}")
-heatmap_fig = make_corridor_heatmap(
-    data,
-    title=f"Resilience Scores \u2014 Top {n_corridors} Corridors ({year})"
-)
-st.plotly_chart(heatmap_fig, use_container_width=True)
+# ─── Tabs: Heatmap | Planning Tiers ──────────────────────────────────────────
+tab_heatmap, tab_tiers = st.tabs(["🗺 Resilience Heatmap", "📐 Planning Tiers"])
+
+with tab_heatmap:
+    section_header("\U0001f5fa", "Resilience Heatmap", f"Top {n_corridors} corridors \u00b7 {year}")
+    heatmap_fig = make_corridor_heatmap(
+        data,
+        title=f"Resilience Scores \u2014 Top {n_corridors} Corridors ({year})"
+    )
+    st.plotly_chart(heatmap_fig, use_container_width=True)
+
+with tab_tiers:
+    section_header("\U0001f4d0", "Planning Tier View",
+                   "Strategy quadrant: RS Score vs. Freight Cost — where should you commit?")
+    st.caption(
+        "Each bubble is a corridor × product pair. "
+        "Use this to classify your lanes into strategy tiers before committing resources."
+    )
+
+    # Build tier dataframe: join RS scores with median freight cost from edges
+    _edges_df = st.session_state.edges
+    _tier_rows = []
+    for row in data:
+        o, d, pname = row["origin"], row["destination"], row["product_name"]
+        rs_score    = row["score"]
+        # Get median freight rate for this corridor × product (across all available years)
+        pcode = [k for k, v in PRODUCT_NAMES.items() if v == pname]
+        if not pcode:
+            continue
+        _mask = (
+            (_edges_df["origin"]       == o) &
+            (_edges_df["destination"]  == d) &
+            (_edges_df["product_code"] == pcode[0]) &
+            (_edges_df["year"]         == year)
+        )
+        _sub = _edges_df[_mask]
+        median_cost = float(_sub["freight_rate"].median()) if not _sub.empty else None
+        if median_cost is None or median_cost <= 0:
+            continue
+
+        # Classify tier
+        high_rs   = rs_score >= RS_TIER_HIGH
+        high_cost = median_cost >= COST_TIER_MED
+        if high_rs and not high_cost:
+            tier = "Tier 1 — Commit"
+            tier_color = "#27AE60"
+        elif high_rs and high_cost:
+            tier = "Tier 2 — Critical Only"
+            tier_color = "#4A90D9"
+        elif not high_rs and not high_cost:
+            tier = "Tier 3 — Buffer Stock"
+            tier_color = "#F39C12"
+        else:
+            tier = "Tier 4 — Diversify"
+            tier_color = "#E74C3C"
+
+        _tier_rows.append({
+            "Corridor":     f"{o} → {d}",
+            "Product":      pname,
+            "RS Score":     rs_score,
+            "Freight Rate (%)": median_cost * 100,
+            "Tier":         tier,
+            "_color":       tier_color,
+        })
+
+    if _tier_rows:
+        _tier_df = pd.DataFrame(_tier_rows)
+
+        # Scatter plot
+        _tier_color_map = {
+            "Tier 1 — Commit":        "#27AE60",
+            "Tier 2 — Critical Only": "#4A90D9",
+            "Tier 3 — Buffer Stock":  "#F39C12",
+            "Tier 4 — Diversify":     "#E74C3C",
+        }
+        _scatter = px.scatter(
+            _tier_df,
+            x="Freight Rate (%)",
+            y="RS Score",
+            color="Tier",
+            color_discrete_map=_tier_color_map,
+            symbol="Product",
+            hover_data=["Corridor", "Product", "RS Score", "Freight Rate (%)"],
+            title="Planning Tiers: RS Score vs Freight Cost",
+            labels={"Freight Rate (%)": "Freight Cost (% of cargo value)", "RS Score": "Resilience Score (0–100)"},
+        )
+
+        # Quadrant dividers
+        _scatter.add_hline(y=RS_TIER_HIGH,    line_dash="dash", line_color="#555", line_width=1)
+        _scatter.add_vline(x=COST_TIER_MED * 100, line_dash="dash", line_color="#555", line_width=1)
+
+        # Quadrant labels
+        x_max = _tier_df["Freight Rate (%)"].max() * 1.1
+        _scatter.add_annotation(x=COST_TIER_MED * 100 / 2,       y=RS_TIER_HIGH + 5,
+                                 text="Tier 1: Commit", showarrow=False,
+                                 font=dict(color="#27AE60", size=10))
+        _scatter.add_annotation(x=(COST_TIER_MED * 100 + x_max) / 2, y=RS_TIER_HIGH + 5,
+                                 text="Tier 2: Critical Only", showarrow=False,
+                                 font=dict(color="#4A90D9", size=10))
+        _scatter.add_annotation(x=COST_TIER_MED * 100 / 2,       y=RS_TIER_HIGH - 8,
+                                 text="Tier 3: Buffer Stock", showarrow=False,
+                                 font=dict(color="#F39C12", size=10))
+        _scatter.add_annotation(x=(COST_TIER_MED * 100 + x_max) / 2, y=RS_TIER_HIGH - 8,
+                                 text="Tier 4: Diversify", showarrow=False,
+                                 font=dict(color="#E74C3C", size=10))
+
+        _scatter.update_layout(
+            paper_bgcolor=COLORS["paper"], plot_bgcolor=COLORS["paper"],
+            font=dict(color="white"),
+            xaxis=dict(gridcolor="#21262d"), yaxis=dict(gridcolor="#21262d"),
+            legend=dict(bgcolor="#161b22", bordercolor="#21262d", borderwidth=1),
+            height=480,
+        )
+        st.plotly_chart(_scatter, use_container_width=True, config={"displayModeBar": False})
+
+        # Tier legend cards
+        st.markdown(
+            '<div style="display:flex;gap:12px;flex-wrap:wrap;margin:8px 0 16px 0">',
+            unsafe_allow_html=True,
+        )
+        _tier_descs = {
+            "Tier 1 — Commit":        ("High RS, Low Cost",  "Best of both worlds — commit confidently to long-term contracts."),
+            "Tier 2 — Critical Only": ("High RS, High Cost", "Resilient but expensive — reserve for mission-critical products."),
+            "Tier 3 — Buffer Stock":  ("Low RS, Low Cost",   "Cheap but fragile — acceptable with safety stock buffer."),
+            "Tier 4 — Diversify":     ("Low RS, High Cost",  "Worst position — diversify sourcing or renegotiate immediately."),
+        }
+        tier_cards_html = '<div style="display:flex;gap:12px;flex-wrap:wrap;margin:8px 0 16px 0">'
+        for tier_name, (subtitle, desc) in _tier_descs.items():
+            color = _tier_color_map[tier_name]
+            tier_cards_html += (
+                f'<div style="background:{color}11;border:1px solid {color}44;border-left:3px solid {color};'
+                f'border-radius:8px;padding:10px 14px;min-width:200px;flex:1">'
+                f'<div style="font-size:12px;font-weight:700;color:{color};margin-bottom:3px">{tier_name}</div>'
+                f'<div style="font-size:11px;color:#8B949E;margin-bottom:4px">{subtitle}</div>'
+                f'<div style="font-size:11px;color:#c9d1d9">{desc}</div>'
+                f'</div>'
+            )
+        tier_cards_html += '</div>'
+        st.markdown(tier_cards_html, unsafe_allow_html=True)
+
+        # Sortable tier table
+        _display_tier_df = (
+            _tier_df[["Tier", "Corridor", "Product", "RS Score", "Freight Rate (%)"]]
+            .sort_values(["Tier", "RS Score"], ascending=[True, False])
+            .reset_index(drop=True)
+        )
+        _display_tier_df["Freight Rate (%)"] = _display_tier_df["Freight Rate (%)"].round(2)
+        _display_tier_df["RS Score"]         = _display_tier_df["RS Score"].round(1)
+        st.dataframe(_display_tier_df, use_container_width=True)
+    else:
+        st.info("Not enough freight rate data to build planning tiers for the selected corridors.")
 
 # ─── Summary statistics ───────────────────────────────────────────────────────
 df = pd.DataFrame(data)

@@ -21,7 +21,10 @@ import networkx as nx
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
 sys.path.insert(0, ROOT)
 
-from config import CHOKEPOINTS, CHOKEPOINT_WAYPOINTS, PRODUCT_NAMES, LATEST_YEAR
+import datetime
+import plotly.graph_objects as go
+
+from config import CHOKEPOINTS, CHOKEPOINT_WAYPOINTS, PRODUCT_NAMES, LATEST_YEAR, DISRUPTION_PROBABILITIES
 from src.graph.routing import find_multi_criteria_routes, apply_scenario
 from src.graph.chokepoints import get_tariff_multipliers
 from src.viz.globe import make_multi_criteria_globe, make_resilience_gauge, make_route_radar, CRITERIA_COLORS
@@ -600,6 +603,323 @@ def _render_cost_of_certainty(routes: dict, base_key: str) -> None:
                 st.markdown(delta_html, unsafe_allow_html=True)
 
 
+# ── Risk-Adjusted Cost Exposure Panel ─────────────────────────────────────────
+def _render_risk_exposure_panel(routes: dict, shipment_usd: float,
+                                has_scenario: bool, blocked: list) -> None:
+    """
+    Translate route cost differences into expected annual dollar exposure.
+    Shows two angles:
+      1) Insurance cost — how much extra per year does the resilient route cost?
+      2) Disruption risk — expected annual loss if on cheapest route and disruption hits.
+    """
+    if shipment_usd <= 0:
+        st.info("Enter your shipment value in the wizard to see dollar-based risk exposure.")
+        return
+
+    cheapest   = routes["cheapest"]
+    resilient  = routes["most_resilient"]
+
+    # Cost premium of resilient vs cheapest (as fraction and USD)
+    cost_delta_frac = resilient.cost - cheapest.cost          # e.g. 0.03 = +3 pp
+    cost_delta_usd  = cost_delta_frac * shipment_usd          # absolute $ per shipment
+
+    cols = st.columns([1, 1, 1])
+
+    with cols[0]:
+        with st.container(border=True):
+            st.markdown(
+                '<div style="font-size:11px;color:#8B949E;text-transform:uppercase;'
+                'letter-spacing:.06em;margin-bottom:6px">Resilience Insurance Cost</div>',
+                unsafe_allow_html=True,
+            )
+            if cost_delta_usd > 0:
+                st.markdown(
+                    f"Choosing the **Most Resilient** route over the **Cheapest** costs "
+                    f"**{_fmt_usd(cost_delta_usd)}** more per shipment "
+                    f"({cost_delta_frac * 100:+.1f} pp freight). "
+                    f"This is the annual premium for routing resilience."
+                )
+            elif cost_delta_usd < 0:
+                st.markdown(
+                    f"The **Most Resilient** route is actually **{_fmt_usd(abs(cost_delta_usd))}** "
+                    f"*cheaper* than the Cheapest route — no trade-off required."
+                )
+            else:
+                st.markdown("Both routes have the same freight cost — resilience is free.")
+
+    with cols[1]:
+        with st.container(border=True):
+            st.markdown(
+                '<div style="font-size:11px;color:#8B949E;text-transform:uppercase;'
+                'letter-spacing:.06em;margin-bottom:6px">Expected Annual Loss (Cheapest Route)</div>',
+                unsafe_allow_html=True,
+            )
+            # If a scenario is active, use the actual cost delta; otherwise estimate from RS diff
+            if has_scenario and blocked:
+                # Cost delta between scenario (current routes) and baseline cheapest is already baked in
+                # We use the cheapest available route's RS delta as proxy for rerouting cost
+                disruption_prob = max(DISRUPTION_PROBABILITIES.get(cp, 0.05) for cp in blocked)
+                exposure_usd = abs(cost_delta_usd) * disruption_prob
+                scenario_note = f"Based on active scenario ({', '.join(blocked)}), probability ≈ {disruption_prob:.0%}/yr."
+            else:
+                # Use average of all chokepoint probabilities as generic market risk
+                avg_prob = sum(DISRUPTION_PROBABILITIES.values()) / len(DISRUPTION_PROBABILITIES)
+                exposure_usd = abs(cost_delta_usd) * avg_prob
+                scenario_note = f"Based on average disruption probability across major chokepoints ({avg_prob:.0%}/yr)."
+
+            st.markdown(
+                f"If you use the **Cheapest** route and a disruption forces rerouting, "
+                f"expected annual extra cost: **{_fmt_usd(exposure_usd)}**. "
+                f"{scenario_note}"
+            )
+
+    with cols[2]:
+        with st.container(border=True):
+            st.markdown(
+                '<div style="font-size:11px;color:#8B949E;text-transform:uppercase;'
+                'letter-spacing:.06em;margin-bottom:6px">Chokepoint Risk Breakdown</div>',
+                unsafe_allow_html=True,
+            )
+            rows_html = []
+            for cp, prob in DISRUPTION_PROBABILITIES.items():
+                exp = abs(cost_delta_usd) * prob
+                rows_html.append(
+                    f'<div style="display:flex;justify-content:space-between;'
+                    f'margin-bottom:4px;font-size:12px">'
+                    f'<span style="color:#c9d1d9">{cp}</span>'
+                    f'<span style="color:#8B949E">{prob:.0%} → <strong style="color:#e6edf3">'
+                    f'{_fmt_usd(exp)}</strong></span></div>'
+                )
+            st.markdown("".join(rows_html), unsafe_allow_html=True)
+            st.caption("Expected annual rerouting cost per chokepoint scenario.")
+
+
+# ── Multi-Year Freight Rate Trend ──────────────────────────────────────────────
+def _render_trend_analysis(edges_df: pd.DataFrame, origin: str, destination: str,
+                           product_code: int, product_label: str) -> None:
+    """
+    Plot historical freight rate and year-over-year volatility for the selected
+    corridor using the full 2016–2021 edge matrix (no graph rebuild needed).
+    """
+    mask = (
+        (edges_df["origin"]       == origin) &
+        (edges_df["destination"]  == destination) &
+        (edges_df["product_code"] == product_code)
+    )
+    corridor_df = edges_df[mask].sort_values("year")
+
+    if corridor_df.empty or "freight_rate" not in corridor_df.columns:
+        st.info("No multi-year rate data available for this corridor.")
+        return
+
+    years  = corridor_df["year"].tolist()
+    rates  = (corridor_df["freight_rate"] * 100).tolist()   # convert to %
+    predicted = corridor_df.get("is_predicted", pd.Series([False] * len(corridor_df))).tolist()
+
+    # YoY change
+    yoy = [None] + [
+        ((rates[i] - rates[i-1]) / rates[i-1] * 100) if rates[i-1] > 0 else None
+        for i in range(1, len(rates))
+    ]
+    std_dev = pd.Series(rates).std()
+
+    fig = go.Figure()
+
+    # COVID shading (2020-2021)
+    fig.add_vrect(
+        x0=2019.5, x1=2021.5,
+        fillcolor="#F39C12", opacity=0.06,
+        line_width=0, annotation_text="COVID era",
+        annotation_position="top left",
+        annotation_font_color="#F39C12", annotation_font_size=10,
+    )
+
+    # Predicted points as dashed / open markers
+    obs_x   = [y for y, p in zip(years, predicted) if not p]
+    obs_y   = [r for r, p in zip(rates,  predicted) if not p]
+    pred_x  = [y for y, p in zip(years, predicted) if p]
+    pred_y  = [r for r, p in zip(rates,  predicted) if p]
+
+    fig.add_trace(go.Scatter(
+        x=obs_x, y=obs_y, mode="lines+markers",
+        name="Observed",
+        line=dict(color="#4A90D9", width=2),
+        marker=dict(size=8, color="#4A90D9"),
+    ))
+    if pred_x:
+        fig.add_trace(go.Scatter(
+            x=pred_x, y=pred_y, mode="markers",
+            name="ML-imputed",
+            marker=dict(size=8, color="#F39C12", symbol="circle-open", line=dict(width=2)),
+        ))
+
+    # Connect all points with a thin line for continuity
+    fig.add_trace(go.Scatter(
+        x=years, y=rates, mode="lines",
+        line=dict(color="#4A90D9", width=1, dash="dot"),
+        showlegend=False,
+    ))
+
+    from src.viz.globe import COLORS
+    fig.update_layout(
+        title=f"Freight Rate Trend: {origin} → {destination} ({product_label})",
+        xaxis=dict(title="Year", tickvals=years, gridcolor="#21262d"),
+        yaxis=dict(title="Freight Rate (% of cargo value)", gridcolor="#21262d"),
+        paper_bgcolor=COLORS["paper"],
+        plot_bgcolor=COLORS["paper"],
+        font=dict(color="white"),
+        legend=dict(bgcolor="#161b22", bordercolor="#21262d", borderwidth=1),
+        height=320,
+    )
+
+    # Volatility annotation
+    fig.add_annotation(
+        x=max(years), y=max(rates),
+        text=f"Volatility σ = {std_dev:.2f}%",
+        showarrow=False,
+        font=dict(size=11, color="#8B949E"),
+        xanchor="right", yanchor="bottom",
+    )
+
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+    # YoY table
+    yoy_rows = [
+        {"Year": y, "Rate (%)": f"{r:.2f}%", "YoY Change": f"{c:+.1f}%" if c is not None else "—"}
+        for y, r, c in zip(years, rates, yoy)
+    ]
+    st.dataframe(pd.DataFrame(yoy_rows).set_index("Year"), use_container_width=True)
+    st.caption(
+        f"Rate volatility (std dev): **{std_dev:.2f} pp** — "
+        + ("High volatility: factor into planning buffers." if std_dev > 3 else
+           "Moderate volatility." if std_dev > 1 else "Stable corridor.")
+    )
+
+
+# ── Planning Report HTML Export ────────────────────────────────────────────────
+def _build_report_html(
+    origin: str, destination: str, product_label: str, year: int,
+    routes: dict, persona_result: dict | None,
+    wiz_answers: dict,
+    blocked: list, us_tariff: int, eu_tariff: int, china_tariff: int, asean_tariff: int,
+) -> str:
+    """Build a standalone HTML planning report from current analysis state."""
+    ts = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    rec_key = persona_result["rec_key"] if persona_result else "most_resilient"
+    rec_r   = routes[rec_key]
+    sv      = wiz_answers.get("shipment_value", 0)
+
+    scenario_parts = []
+    if blocked:
+        scenario_parts.append(f"Blocked chokepoints: {', '.join(blocked)}")
+    tariff_parts = []
+    if us_tariff:    tariff_parts.append(f"US {us_tariff}%")
+    if eu_tariff:    tariff_parts.append(f"EU {eu_tariff}%")
+    if china_tariff: tariff_parts.append(f"China {china_tariff}%")
+    if asean_tariff: tariff_parts.append(f"ASEAN {asean_tariff}%")
+    if tariff_parts:
+        scenario_parts.append(f"Tariffs: {', '.join(tariff_parts)}")
+    scenario_str = "; ".join(scenario_parts) if scenario_parts else "Baseline (no disruptions)"
+
+    # Build route rows
+    route_rows_html = ""
+    for ck in ["most_resilient", "cheapest", "fastest"]:
+        r = routes[ck]
+        is_rec = (ck == rec_key)
+        rec_marker = " ★ Recommended" if is_rec else ""
+        cost_str = f"{r.cost * 100:.2f}%"
+        if sv > 0:
+            cost_str += f" ({_fmt_usd(r.cost * sv)})"
+        bg = "#1a2a1a" if is_rec else "transparent"
+        route_rows_html += (
+            f"<tr style='background:{bg}'>"
+            f"<td><strong>{ck.replace('_', ' ').title()}{rec_marker}</strong></td>"
+            f"<td>{' → '.join(r.path)}</td>"
+            f"<td>{cost_str}</td>"
+            f"<td>{r.lead_time_days:.0f} d</td>"
+            f"<td>{r.rs:.1f}</td>"
+            f"</tr>"
+        )
+
+    # Business context section
+    ctx_rows_html = ""
+    if wiz_answers:
+        ctx_rows_html += f"<tr><td>Shipment Value</td><td>{_fmt_usd(sv) if sv else 'Not specified'}</td></tr>"
+        ctx_rows_html += f"<tr><td>Profit Margin</td><td>{wiz_answers.get('margin', '—')}%</td></tr>"
+        ctx_rows_html += f"<tr><td>Supply Continuity</td><td>{wiz_answers.get('continuity', '—')}</td></tr>"
+        ctx_rows_html += f"<tr><td>Cost Sensitivity</td><td>{wiz_answers.get('cost_sensitivity', '—')}</td></tr>"
+        dl = wiz_answers.get('deadline_option', 'No deadline')
+        dl_days = wiz_answers.get('deadline_days')
+        ctx_rows_html += f"<tr><td>Delivery Deadline</td><td>{dl}{f' ({dl_days} days)' if dl_days else ''}</td></tr>"
+
+    persona_section = ""
+    if persona_result:
+        persona_section = f"""
+        <h2>Persona &amp; Recommendation</h2>
+        <p><strong>Profile:</strong> {persona_result['persona_name']}</p>
+        <p><strong>Rationale:</strong> {persona_result['story']}</p>
+        <p><strong>Recommended:</strong> {rec_key.replace('_', ' ').title()} —
+           {' → '.join(rec_r.path)}</p>
+        """
+        if persona_result.get("warnings"):
+            warnings_html = "".join(f"<li>{w}</li>" for w in persona_result["warnings"])
+            persona_section += f"<p><strong>Warnings:</strong></p><ul>{warnings_html}</ul>"
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>SONAR Planning Report — {origin} to {destination}</title>
+  <style>
+    body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+           background:#0d1117; color:#c9d1d9; margin:40px; line-height:1.6 }}
+    h1   {{ color:#4A90D9; border-bottom:2px solid #21262d; padding-bottom:10px }}
+    h2   {{ color:#e6edf3; margin-top:32px; font-size:16px; text-transform:uppercase;
+            letter-spacing:.04em; border-left:3px solid #4A90D9; padding-left:10px }}
+    table {{ border-collapse:collapse; width:100%; margin:12px 0 }}
+    th   {{ background:#161b22; color:#8B949E; text-align:left; padding:8px 12px;
+            font-size:11px; text-transform:uppercase; letter-spacing:.05em }}
+    td   {{ padding:8px 12px; border-bottom:1px solid #21262d; font-size:13px }}
+    .meta {{ color:#8B949E; font-size:12px; margin-bottom:24px }}
+    .badge {{ display:inline-block; background:#27AE6022; border:1px solid #27AE60;
+              border-radius:12px; padding:2px 10px; font-size:11px; color:#27AE60 }}
+  </style>
+</head>
+<body>
+  <h1>SONAR Planning Report</h1>
+  <div class="meta">
+    Generated: {ts} &nbsp;|&nbsp; Corridor: <strong>{origin} → {destination}</strong>
+    &nbsp;|&nbsp; Product: {product_label} &nbsp;|&nbsp; Data year: {year}
+  </div>
+
+  <h2>Scenario Applied</h2>
+  <p>{scenario_str}</p>
+
+  {"<h2>Business Context</h2><table><thead><tr><th>Parameter</th><th>Value</th></tr></thead><tbody>" + ctx_rows_html + "</tbody></table>" if ctx_rows_html else ""}
+
+  {persona_section}
+
+  <h2>Route Comparison</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Criterion</th><th>Route</th><th>Freight Cost</th>
+        <th>Lead Time</th><th>RS Score</th>
+      </tr>
+    </thead>
+    <tbody>{route_rows_html}</tbody>
+  </table>
+
+  <p style="margin-top:40px;font-size:11px;color:#8B949E">
+    SONAR — Supply-chain Optimization and Network Analysis for Resilience.<br>
+    Data: UNCTAD 2016–2021. Freight rates partially ML-imputed (XGBoost).
+    Resilience scores use AHP-TOPSIS (CR=0.003). This report is for planning purposes only.
+  </p>
+</body>
+</html>"""
+    return html
+
+
 # ── Chatbot recommendation text ────────────────────────────────────────────────
 def _chatbot_message(answers: dict, persona_result: dict, routes: dict) -> str:
     rec_key   = persona_result["rec_key"]
@@ -759,6 +1079,25 @@ if st.session_state.explorer_mode == "expert":
     )
     _render_cost_of_certainty(routes, base_key="cheapest")
 
+    # ── Risk Exposure Panel ───────────────────────────────────────────────────
+    st.markdown("---")
+    section_header("💸", "Financial Risk Exposure")
+    _exp_val = st.number_input(
+        "Shipment value (USD) for dollar exposure estimates",
+        min_value=0, max_value=1_000_000_000,
+        value=1_000_000, step=100_000, format="%d",
+        key="expert_shipment_val",
+    )
+    _render_risk_exposure_panel(routes, float(_exp_val), has_scenario, blocked)
+
+    # ── Trend Analysis ────────────────────────────────────────────────────────
+    st.markdown("---")
+    section_header("📈", "Historical Rate Trend (2016–2021)")
+    with st.expander("Show freight rate trend for this corridor", expanded=True):
+        _render_trend_analysis(
+            st.session_state.edges, origin, destination, product_code, product_label
+        )
+
     # ── Summary table + CSV export ────────────────────────────────────────────
     st.markdown("---")
     section_header("📋", "Trade-off Summary")
@@ -778,12 +1117,25 @@ if st.session_state.explorer_mode == "expert":
     summary_df = pd.DataFrame(summary_rows).set_index("Criterion")
     st.dataframe(summary_df, use_container_width=True)
 
-    st.download_button(
-        "Download as CSV",
-        data=summary_df.to_csv(),
-        file_name=f"sonar_routes_{origin}_{destination}.csv",
-        mime="text/csv",
-    )
+    _dl_col, _rpt_col = st.columns(2)
+    with _dl_col:
+        st.download_button(
+            "Download as CSV",
+            data=summary_df.to_csv(),
+            file_name=f"sonar_routes_{origin}_{destination}.csv",
+            mime="text/csv",
+        )
+    with _rpt_col:
+        st.download_button(
+            "Export Planning Report (HTML)",
+            data=_build_report_html(
+                origin, destination, product_label, year,
+                routes, None, {"shipment_value": _exp_val},
+                blocked, us_tariff, eu_tariff, china_tariff, asean_tariff,
+            ),
+            file_name=f"sonar_report_{origin}_{destination}.html",
+            mime="text/html",
+        )
 
     render_footer()
 
@@ -1012,11 +1364,24 @@ else:
         )
         _render_cost_of_certainty(guided_routes, base_key=rec_key)
 
+        # ── Risk Exposure Panel ────────────────────────────────────────────────
+        st.markdown("---")
+        section_header("💸", "Financial Risk Exposure")
+        _sv = persona_result.get("shipment_value", 0)
+        _render_risk_exposure_panel(guided_routes, float(_sv), has_scenario, blocked)
+
+        # ── Trend Analysis ─────────────────────────────────────────────────────
+        st.markdown("---")
+        section_header("📈", "Historical Rate Trend (2016–2021)")
+        with st.expander("Show freight rate trend for this corridor", expanded=True):
+            _render_trend_analysis(
+                st.session_state.edges, origin, destination, product_code, product_label
+            )
+
         # ── Summary table + CSV export ────────────────────────────────────────
         st.markdown("---")
         section_header("📋", "Trade-off Summary")
         summary_rows = []
-        _sv = persona_result.get("shipment_value", 0)
         for crit_key in guided_crit_keys:
             crit_label = _LABELS[crit_key]
             icon       = _ICONS[crit_key]
@@ -1041,12 +1406,25 @@ else:
         guided_df = pd.DataFrame(summary_rows).set_index("Criterion")
         st.dataframe(guided_df, use_container_width=True)
 
-        st.download_button(
-            "Download as CSV",
-            data=guided_df.to_csv(),
-            file_name=f"sonar_routes_{origin}_{destination}.csv",
-            mime="text/csv",
-        )
+        _dl_col2, _rpt_col2 = st.columns(2)
+        with _dl_col2:
+            st.download_button(
+                "Download as CSV",
+                data=guided_df.to_csv(),
+                file_name=f"sonar_routes_{origin}_{destination}.csv",
+                mime="text/csv",
+            )
+        with _rpt_col2:
+            st.download_button(
+                "Export Planning Report (HTML)",
+                data=_build_report_html(
+                    origin, destination, product_label, year,
+                    guided_routes, persona_result, st.session_state.wiz_answers,
+                    blocked, us_tariff, eu_tariff, china_tariff, asean_tariff,
+                ),
+                file_name=f"sonar_report_{origin}_{destination}.html",
+                mime="text/html",
+            )
 
         render_footer()
 

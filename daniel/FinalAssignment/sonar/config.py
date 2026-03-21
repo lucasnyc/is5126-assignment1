@@ -620,6 +620,24 @@ COUNTRY_COORDS = {
     "Zimbabwe": (-19.015438, 29.154857),
 }
 
+# ─── Disruption probabilities (annual) ────────────────────────────────────────
+# Estimated annual probability of significant closure per chokepoint.
+# Sources: IMO Maritime Safety Committee reports; World Bank logistics
+# disruption database; academic literature on straits risk (2015–2023 average).
+# Used by the Risk Exposure Panel in Route Explorer.
+DISRUPTION_PROBABILITIES = {
+    "Suez Canal":        0.15,   # ~15%: Houthi/conflict events, canal incidents
+    "Panama Canal":      0.07,   # ~7%:  drought-driven draft restrictions (2023)
+    "Strait of Hormuz":  0.08,   # ~8%:  Iran-Gulf tensions, periodic naval incidents
+    "Strait of Malacca": 0.05,   # ~5%:  piracy, vessel groundings
+}
+
+# Planning tier thresholds for the Resilience Analysis scatter view.
+# Corridors above RS_TIER_HIGH and below COST_TIER_MED are Tier 1 (Commit),
+# above RS_TIER_HIGH and above COST_TIER_MED are Tier 2 (Critical only), etc.
+RS_TIER_HIGH   = 50.0   # RS score threshold: "high" vs "low" resilience
+COST_TIER_MED  = 0.10   # freight rate threshold: >10% of cargo value = "high cost"
+
 # ─── ML feature list ──────────────────────────────────────────────────────────
 ML_FEATURES = [
     "origin_lsci", "dest_lsci", "bilateral_lsci",

@@ -138,10 +138,10 @@ st.markdown("""
         Supply-chain Optimization &amp; Network Analysis for Resilience
     </div>
     <div style="font-size: 13px; color: #8B949E; line-height: 1.7; max-width: 720px;">
-        Real-time maritime route optimization powered by UNCTAD bilateral trade data,
-        ML-imputed freight rates, and AHP-weighted resilience scoring.
-        Simulate chokepoint closures and tariff shocks to stress-test your supply chain
-        before disruptions hit.
+        Strategic supply chain planning tool for profit-driven companies.
+        Compare trade corridors, quantify disruption risk in dollars, and identify
+        your best sourcing strategy — powered by UNCTAD bilateral trade data,
+        ML-imputed freight rates, and AHP-weighted resilience scoring across 375K+ corridors.
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -218,6 +218,16 @@ st.markdown("""
             Understand why the XGBoost model predicted a specific freight rate.
             Inspect per-edge SHAP-style feature importance, global gain rankings,
             and held-out test performance with design decision rationale.
+        </div>
+    </div>
+    <div class="nav-card" style="border-top:3px solid #58a6ff">
+        <div class="nav-icon">⚖</div>
+        <div class="nav-title">Corridor Comparison</div>
+        <div class="nav-desc">
+            Compare 2–4 trade lanes side by side across all planning metrics:
+            Resilience Score, freight cost, lead time, rate volatility, and
+            chokepoint exposure. Rank by your own priority weights to identify
+            the best sourcing strategy.
         </div>
     </div>
 </div>
