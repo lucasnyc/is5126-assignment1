@@ -18,7 +18,10 @@ from config import (
     EDGES_PATH, YEARS, LATEST_YEAR, PRODUCT_CODES, PROCESSED_DIR,
     COUNTRY_COORDS
 )
-from src.data.loaders import load_country_lsci, load_merchant_fleet
+from src.data.loaders import (
+    load_country_lsci, load_merchant_fleet, load_port_throughput,
+    load_weather_severity, load_disruption_metrics,
+)
 
 
 GRAPHS_CACHE_PATH        = os.path.join(PROCESSED_DIR, "graphs_cache.pkl")
@@ -27,29 +30,62 @@ LATEST_GRAPHS_CACHE_PATH = os.path.join(PROCESSED_DIR, "graphs_latest.pkl")
 
 def _load_node_attributes() -> dict[str, dict]:
     """
-    Build a dict mapping country → {lsci_by_year, fleet_pct_by_year, lat, lon}.
+    Build a dict mapping country → {lsci_by_year, fleet_pct_by_year, teu_by_year,
+    weather_severity, otd_rate, mean_delay_norm, congestion_rate,
+    geo_conflict_rate, mean_gri, lat, lon}.
     Used to annotate graph nodes.
     """
     clsci = load_country_lsci()
     fleet = load_merchant_fleet()
+    teu   = load_port_throughput()
+    weather   = load_weather_severity()
+    disruption = load_disruption_metrics()
+
+    _defaults = {
+        "lsci": {}, "fleet_pct": {}, "teu": {},
+        "weather_severity": None,
+        "otd_rate": None, "mean_delay_norm": None,
+        "congestion_rate": None, "geo_conflict_rate": None, "mean_gri": None,
+        "lat": None, "lon": None,
+    }
 
     attrs: dict[str, dict] = {}
 
+    def _ensure(c):
+        if c not in attrs:
+            attrs[c] = {k: (v.copy() if isinstance(v, dict) else v) for k, v in _defaults.items()}
+
     for _, row in clsci.iterrows():
         c = row["country"]
-        if c not in attrs:
-            attrs[c] = {"lsci": {}, "fleet_pct": {}, "lat": None, "lon": None}
+        _ensure(c)
         attrs[c]["lsci"][int(row["year"])] = float(row["country_lsci"] or 0)
 
     for _, row in fleet.iterrows():
         c = row["country"]
-        if c not in attrs:
-            attrs[c] = {"lsci": {}, "fleet_pct": {}, "lat": None, "lon": None}
+        _ensure(c)
         attrs[c]["fleet_pct"][int(row["year"])] = float(row["fleet_pct"] or 0)
 
+    for _, row in teu.iterrows():
+        c = row["country"]
+        _ensure(c)
+        attrs[c]["teu"][int(row["year"])] = float(row["teu"]) if pd.notna(row["teu"]) else 0.0
+
+    for _, row in weather.iterrows():
+        c = row["country"]
+        _ensure(c)
+        attrs[c]["weather_severity"] = float(row["weather_severity"])
+
+    for _, row in disruption.iterrows():
+        c = row["country"]
+        _ensure(c)
+        attrs[c]["otd_rate"]          = float(row["otd_rate"])
+        attrs[c]["mean_delay_norm"]   = float(row["mean_delay_norm"])
+        attrs[c]["congestion_rate"]   = float(row["congestion_rate"])
+        attrs[c]["geo_conflict_rate"] = float(row["geo_conflict_rate"])
+        attrs[c]["mean_gri"]          = float(row["mean_gri"])
+
     for country, (lat, lon) in COUNTRY_COORDS.items():
-        if country not in attrs:
-            attrs[country] = {"lsci": {}, "fleet_pct": {}, "lat": None, "lon": None}
+        _ensure(country)
         attrs[country]["lat"] = lat
         attrs[country]["lon"] = lon
 
@@ -105,10 +141,17 @@ def build_graph(
 
     for node in G.nodes():
         na = node_attrs.get(node, {})
-        G.nodes[node]["lsci"]      = na.get("lsci", {}).get(year, 0.0)
-        G.nodes[node]["fleet_pct"] = na.get("fleet_pct", {}).get(year, 0.0)
-        G.nodes[node]["lat"]       = na.get("lat")
-        G.nodes[node]["lon"]       = na.get("lon")
+        G.nodes[node]["lsci"]              = na.get("lsci", {}).get(year, 0.0)
+        G.nodes[node]["fleet_pct"]         = na.get("fleet_pct", {}).get(year, 0.0)
+        G.nodes[node]["teu"]               = na.get("teu", {}).get(year, 0.0)
+        G.nodes[node]["weather_severity"]  = na.get("weather_severity")
+        G.nodes[node]["otd_rate"]          = na.get("otd_rate")
+        G.nodes[node]["mean_delay_norm"]   = na.get("mean_delay_norm")
+        G.nodes[node]["congestion_rate"]   = na.get("congestion_rate")
+        G.nodes[node]["geo_conflict_rate"] = na.get("geo_conflict_rate")
+        G.nodes[node]["mean_gri"]          = na.get("mean_gri")
+        G.nodes[node]["lat"]               = na.get("lat")
+        G.nodes[node]["lon"]               = na.get("lon")
 
     return G
 

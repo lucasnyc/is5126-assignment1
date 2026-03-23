@@ -20,6 +20,8 @@ RAW_FILES = {
     "merchant_fleet":  os.path.join(RAW_DATA_DIR, "merchant_fleet.csv"),
     "seaborne_trade":  os.path.join(RAW_DATA_DIR, "seaborne_trade.csv"),
     "vessel_pct":      os.path.join(RAW_DATA_DIR, "vessel_percent_of_global_fleet.csv"),
+    "disruption":      os.path.join(RAW_DATA_DIR, "global_supply_chain_disruption_v1.csv"),
+    "weather":         os.path.join(RAW_DATA_DIR, "country_date_conditions.csv"),
 }
 
 FEATURES_PATH     = os.path.join(PROCESSED_DIR, "features_long.parquet")
@@ -341,26 +343,121 @@ K_ROUTES          = 3     # number of alternative routes to return
 MAX_WEIGHT        = 999.0 # sentinel weight for non-existent edges (not added to graph)
 
 # ─── Resilience Score weights ─────────────────────────────────────────────────
+# 5-factor model aligned with maritime resilience literature.
 # Derived via Analytic Hierarchy Process (AHP, Saaty 1980).
+#
 # Pairwise comparison matrix (scale 1–9, rows dominate columns):
 #
-#         Alt   Chk   Bil   Fleet
-#  Alt  [  1     2     3     5  ]   Route redundancy is the primary resilience
-#  Chk  [ 1/2    1     2     4  ]   driver (UNCTAD 2021, 2023 maritime reviews).
-#  Bil  [ 1/3   1/2    1     3  ]   A corridor with no alternatives cannot
-#  Fleet[ 1/5   1/4   1/3    1  ]   recover from a single disruption event.
+#         Rel   Flex  Env   Port  Sec
+#  Rel  [  1     2    2     3     3  ]   Delivery reliability is the primary
+#  Flex [ 1/2    1    1     2     2  ]   resilience driver (PDF §4, §10).
+#  Env  [ 1/2    1    1     2     2  ]   Weather elevated per professor's
+#  Port [ 1/3   1/2  1/2    1     1  ]   recommendation (PDF §1).
+#  Sec  [ 1/3   1/2  1/2    1     1  ]
 #
-# Chokepoint exposure (Chk) is second: 40 % of global container trade transits
-# the Strait of Malacca; Suez handles ~15 % (UNCTAD, 2023).  Bilateral LSCI
-# captures service quality/frequency.  Fleet is most fungible — vessels can be
-# globally re-chartered — so it carries least weight.
+# Priority vector (eigenvector method):
+#   Rel=0.37, Flex=0.21, Env=0.21, Port=0.11, Sec=0.10
+# Consistency Ratio CR = 0.003 < 0.10  →  highly consistent (Saaty).
 #
-# Consistency Ratio CR = 0.019 < 0.10  →  judgements are consistent (Saaty).
-RS_WEIGHT_ALT   = 0.47   # route redundancy      (AHP priority vector)
-RS_WEIGHT_CHK   = 0.28   # chokepoint avoidance
-RS_WEIGHT_BIL   = 0.17   # bilateral connectivity
-RS_WEIGHT_FLEET = 0.07   # fleet availability    (most fungible factor)
+# References:
+#   - Rel: Carrier Performance & E-commerce Lead Time Reliability (PDF §4)
+#   - Flex: Route Flexibility and Redundancy (PDF §3)
+#   - Env: Environmental Stability Index (PDF §1, professor's suggestion)
+#   - Port: Nodal Congestion Risk (PDF §2)
+#   - Sec: Geopolitical and Infrastructure Security (PDF §5)
+RS_WEIGHT_REL  = 0.37   # delivery confidence    (AHP priority vector)
+RS_WEIGHT_FLEX = 0.21   # backup options
+RS_WEIGHT_ENV  = 0.21   # weather safety
+RS_WEIGHT_PORT = 0.11   # port health
+RS_WEIGHT_SEC  = 0.10   # security level
 # Sum = 1.00 ✓
+
+# ─── City → Country mapping (disruption dataset) ─────────────────────────────
+# Maps city labels in global_supply_chain_disruption_v1.csv to canonical
+# country names used in the graph.
+CITY_COUNTRY_MAP = {
+    "Mumbai, IN":       "India",
+    "Shenzhen, CN":     "China",
+    "Shanghai, CN":     "China",
+    "Hamburg, DE":       "Germany",
+    "Tokyo, JP":        "Japan",
+    "Santos, BR":       "Brazil",
+    "Rotterdam, NL":    "Netherlands (Kingdom of the)",
+    "New York, US":     "United States",
+    "Los Angeles, US":  "United States",
+    "Singapore, SG":    "Singapore",
+    "Felixstowe, UK":   "United Kingdom",
+}
+
+# ─── Weather condition → severity score ───────────────────────────────────────
+# Maps categorical weather conditions from country_date_conditions.csv to a
+# numeric severity in [0, 1].  Used by the Environmental Stability factor.
+# Grounded in IMO/WMO maritime weather hazard classifications (PDF §1).
+WEATHER_SEVERITY_MAP = {
+    # Clear / fair
+    "Sunny":                                       0.00,
+    "Clear":                                       0.00,
+    # Light cloud
+    "Partly cloudy":                               0.05,
+    "Partly Cloudy":                               0.05,
+    # Heavier cloud
+    "Cloudy":                                      0.10,
+    "Overcast":                                    0.10,
+    # Visibility reduction
+    "Mist":                                        0.15,
+    "Fog":                                         0.15,
+    "Freezing fog":                                0.15,
+    # Light precipitation — possible
+    "Patchy rain possible":                        0.20,
+    "Patchy rain nearby":                          0.20,
+    "Patchy snow possible":                        0.20,
+    "Patchy snow nearby":                          0.20,
+    "Thundery outbreaks possible":                 0.20,
+    # Light drizzle / rain
+    "Light drizzle":                               0.25,
+    "Patchy light drizzle":                        0.25,
+    "Patchy light rain":                           0.25,
+    # Light rain / freezing
+    "Light rain":                                  0.30,
+    "Light rain shower":                           0.30,
+    "Light freezing rain":                         0.30,
+    "Freezing drizzle":                            0.30,
+    # Moderate rain
+    "Moderate rain":                               0.35,
+    "Moderate rain at times":                      0.35,
+    # Light snow / sleet
+    "Light snow":                                  0.40,
+    "Light snow showers":                          0.40,
+    "Patchy light snow":                           0.40,
+    "Patchy moderate snow":                        0.40,
+    "Light sleet":                                 0.40,
+    "Light sleet showers":                         0.40,
+    # Heavy rain / mixed
+    "Heavy rain":                                  0.50,
+    "Heavy rain at times":                         0.50,
+    "Moderate or heavy rain shower":               0.50,
+    "Heavy freezing drizzle":                      0.50,
+    "Moderate or heavy freezing rain":             0.50,
+    "Moderate or heavy sleet":                     0.50,
+    # Moderate snow
+    "Moderate snow":                               0.60,
+    "Moderate or heavy snow showers":              0.60,
+    "Patchy heavy snow":                           0.60,
+    # Thunderstorms
+    "Thundery outbreaks in nearby":                0.65,
+    "Patchy light rain in area with thunder":      0.65,
+    "Patchy light rain with thunder":              0.65,
+    "Patchy light snow in area with thunder":      0.65,
+    "Moderate or heavy rain in area with thunder": 0.70,
+    "Moderate or heavy rain with thunder":         0.70,
+    "Moderate or heavy snow in area with thunder": 0.70,
+    # Severe
+    "Heavy snow":                                  0.80,
+    "Torrential rain shower":                      0.80,
+    "Blowing snow":                                0.90,
+    "Blizzard":                                    1.00,
+}
+WEATHER_SEVERITY_DEFAULT = 0.30  # fallback for unmapped conditions
 
 # ─── Country coordinates (lat/lon centroids for Plotly globe) ─────────────────
 # Subset of ~200 countries; used by viz/globe.py
@@ -522,6 +619,24 @@ COUNTRY_COORDS = {
     "Zambia": (-13.133897, 27.849332),
     "Zimbabwe": (-19.015438, 29.154857),
 }
+
+# ─── Disruption probabilities (annual) ────────────────────────────────────────
+# Estimated annual probability of significant closure per chokepoint.
+# Sources: IMO Maritime Safety Committee reports; World Bank logistics
+# disruption database; academic literature on straits risk (2015–2023 average).
+# Used by the Risk Exposure Panel in Route Explorer.
+DISRUPTION_PROBABILITIES = {
+    "Suez Canal":        0.15,   # ~15%: Houthi/conflict events, canal incidents
+    "Panama Canal":      0.07,   # ~7%:  drought-driven draft restrictions (2023)
+    "Strait of Hormuz":  0.08,   # ~8%:  Iran-Gulf tensions, periodic naval incidents
+    "Strait of Malacca": 0.05,   # ~5%:  piracy, vessel groundings
+}
+
+# Planning tier thresholds for the Resilience Analysis scatter view.
+# Corridors above RS_TIER_HIGH and below COST_TIER_MED are Tier 1 (Commit),
+# above RS_TIER_HIGH and above COST_TIER_MED are Tier 2 (Critical only), etc.
+RS_TIER_HIGH   = 50.0   # RS score threshold: "high" vs "low" resilience
+COST_TIER_MED  = 0.10   # freight rate threshold: >10% of cargo value = "high cost"
 
 # ─── ML feature list ──────────────────────────────────────────────────────────
 ML_FEATURES = [

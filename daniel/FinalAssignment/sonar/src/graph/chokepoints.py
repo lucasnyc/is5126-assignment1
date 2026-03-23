@@ -51,13 +51,19 @@ def get_tariff_multipliers(
 
 def chokepoint_exposure(path: list[str]) -> float:
     """
-    Fraction of chokepoint countries present among the intermediate nodes of path.
-    0.0 = no chokepoint countries on path (best)
-    1.0 = all chokepoint countries on path (worst)
+    Fraction of *intermediate* nodes that are chokepoint countries.
+    0.0 = no chokepoint countries among transshipment hubs (best)
+    1.0 = every transshipment hub is a strategic chokepoint (worst)
+
+    Divides by the number of actual intermediate stops, not by the total
+    count of all known chokepoint countries.  This ensures:
+      - Direct routes always score 0.0 (no intermediates)
+      - Routes through 1 hub where that hub is a chokepoint → 1.0
+      - Routes through 2 hubs where 1 is a chokepoint → 0.5
     """
     if len(path) <= 2:
         return 0.0
-    intermediates = set(path[1:-1])
+    intermediates = path[1:-1]
     cp_set        = set(ALL_CHOKEPOINT_COUNTRIES)
-    exposure = len(intermediates & cp_set) / max(len(cp_set), 1)
-    return float(exposure)
+    hits = sum(1 for n in intermediates if n in cp_set)
+    return float(hits / len(intermediates))
