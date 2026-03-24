@@ -1,6 +1,6 @@
 """
 Resilience Score Explainer page.
-Explains the 5-factor AHP-weighted resilience model to the user,
+Explains the 5-factor equal-weighted resilience model to the user,
 with live interactive scoring for any corridor.
 """
 
@@ -28,7 +28,7 @@ from src.viz.globe import COLORS
 from app.components.theme import inject_global_css, section_header, render_footer
 
 st.set_page_config(
-    page_title="Resilience Scoring Explainability · SONAR",
+    page_title="Score Methodology · SONAR",
     layout="wide",
     page_icon="🛡",
 )
@@ -61,11 +61,11 @@ st.markdown("""
 <div style="background:#161b22;border:1px solid #21262d;border-left:4px solid #9B59B6;
             border-radius:8px;padding:20px 24px;margin:8px 0 16px 0;font-family:monospace">
     <div style="font-size:15px;font-weight:700;color:#e6edf3;margin-bottom:6px">
-        RS = 100 × (0.37·Rel + 0.21·Flex + 0.21·Env + 0.11·Port + 0.10·Sec)
+        RS = 100 × (0.20·Rel + 0.20·Flex + 0.20·Env + 0.20·Port + 0.20·Sec)
     </div>
     <div style="font-size:12px;color:#8B949E">
         Each component ∈ [0, 1] &nbsp;|&nbsp; RS ∈ [0, 100] &nbsp;|&nbsp;
-        Weights via Analytic Hierarchy Process (Saaty 1980), CR = 0.003 &lt; 0.10
+        Equal weights (0.20 each) across all five factors
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -86,7 +86,7 @@ fig_weights = go.Figure(go.Bar(
 ))
 fig_weights.update_layout(
     height=280,
-    yaxis=dict(title="Weight (%)", range=[0, 45], gridcolor="#21262d", tickformat=".0f"),
+    yaxis=dict(title="Weight (%)", range=[0, 30], gridcolor="#21262d", tickformat=".0f"),
     xaxis=dict(gridcolor="#21262d"),
     paper_bgcolor=COLORS["paper"],
     plot_bgcolor=COLORS["paper"],
@@ -214,62 +214,6 @@ for det in _factor_details:
             unsafe_allow_html=True,
         )
     st.write("")
-
-# ── 3. AHP weighting rationale ────────────────────────────────────────────────
-section_header("⚖️", "AHP Pairwise Comparison Matrix", "Consistency Ratio = 0.003 (threshold: < 0.10)")
-
-ahp_labels = ["Rel", "Flex", "Env", "Port", "Sec"]
-ahp_matrix = [
-    [1,     2,    2,    3,    3],
-    [1/2,   1,    1,    2,    2],
-    [1/2,   1,    1,    2,    2],
-    [1/3,   1/2,  1/2,  1,    1],
-    [1/3,   1/2,  1/2,  1,    1],
-]
-ahp_df = pd.DataFrame(ahp_matrix, index=ahp_labels, columns=ahp_labels)
-
-col_ahp, col_rationale = st.columns([2, 3])
-
-with col_ahp:
-    # Format fractions nicely
-    def _fmt(v):
-        if v == 1/2: return "1/2"
-        if v == 1/3: return "1/3"
-        return str(int(v))
-
-    display_matrix = [[_fmt(v) for v in row] for row in ahp_matrix]
-    display_df = pd.DataFrame(display_matrix, index=ahp_labels, columns=ahp_labels)
-
-    st.dataframe(
-        display_df.style.set_properties(**{
-            "text-align": "center",
-            "font-weight": "600",
-        }),
-        use_container_width=True,
-    )
-    st.caption("Values > 1 mean the row factor dominates the column factor.")
-
-with col_rationale:
-    st.markdown("""
-    <div style="background:#161b22;border:1px solid #21262d;border-radius:8px;
-                padding:16px 20px;font-size:13px;line-height:1.75;color:#c9d1d9">
-        <b style="color:#e6edf3">Weighting rationale</b><br><br>
-        Multi-criteria decision-making research in transportation logistics consistently
-        identifies <b style="color:#4A90D9">delivery reliability</b> as the primary
-        resilience driver, often accounting for 35–45% of composite scores in AHP-based
-        freight models. <b>Rel</b> is therefore rated dominant (2×) over all other factors.<br><br>
-        <b style="color:#27AE60">Route flexibility</b> and
-        <b style="color:#F39C12">environmental stability</b> receive equal weight as
-        co-primary structural and environmental resilience dimensions. Route flexibility
-        captures the network's ability to absorb disruptions through alternative paths,
-        while weather stability directly affects vessel kinematics, port berthing, and
-        cargo integrity — both are operationally irreplaceable.<br><br>
-        <b style="color:#9B59B6">Port capacity</b> and
-        <b style="color:#E74C3C">geopolitical security</b> are treated as supporting
-        factors: significant but more amenable to mitigation through advance planning,
-        carrier selection, and inventory buffering than structural path limitations.
-    </div>
-    """, unsafe_allow_html=True)
 
 # ── 4. Scoring labels ─────────────────────────────────────────────────────────
 section_header("🏷", "Score Interpretation")

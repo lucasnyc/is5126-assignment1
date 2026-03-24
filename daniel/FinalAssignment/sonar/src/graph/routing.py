@@ -20,8 +20,9 @@ from src.graph.chokepoints import get_countries_to_remove, chokepoint_exposure
 
 # Average container ship speed: 15 knots = 27.78 km/h = 666.7 km/day
 _SHIP_SPEED_KM_PER_DAY = 666.7
-# Port handling time per intermediate stop (loading, customs, berthing)
-_PORT_DAYS_PER_STOP = 0.75
+# Port handling time per intermediate transshipment stop
+# (unloading ~0.5d + storage/customs ~1.5d + reloading ~0.5d)
+_PORT_DAYS_PER_STOP = 2.5
 # Maximum allowed ratio of (total path distance) / (direct great-circle distance).
 # Real transshipment adds 10–80 % extra distance (e.g. China→Singapore→Europe ≈ 1.9×).
 # A ratio > 3.0 indicates a geographically absurd phantom route.
@@ -222,6 +223,36 @@ def _is_geographically_valid(path: list[str]) -> bool:
     return (total_km / direct_km) <= _MAX_DETOUR_RATIO
 
 
+# ─── Maritime chokepoint exposure ────────────────────────────────────────────
+
+_ALL_CHOKEPOINT_WPS: frozenset = frozenset(
+    wp for wps in CHOKEPOINT_WAYPOINTS.values() for wp in wps
+)
+
+
+def maritime_chokepoint_exposure(path: list[str]) -> float:
+    """
+    Fraction of added sailing distance if all major chokepoints were simultaneously
+    blocked (Suez, Panama, Hormuz, Malacca).
+
+    Measures actual maritime route dependency, not intermediate country nodes:
+      - China → US (transpacific): ~0%  — Pacific route, no chokepoints used
+      - China → Germany:          ~35%  — Malacca + Suez, detours around Cape
+      - India → Germany:          ~15%  — Suez dependency
+      - US → Japan (via Pacific): ~0%   — no chokepoints on Pacific crossing
+
+    Returns a value in [0, 1] where higher = more exposed to chokepoint disruption.
+    """
+    if len(path) < 2:
+        return 0.0
+    legs = list(zip(path[:-1], path[1:]))
+    normal_km  = sum(_maritime_leg_km(u, v, frozenset())         for u, v in legs)
+    blocked_km = sum(_maritime_leg_km(u, v, _ALL_CHOKEPOINT_WPS) for u, v in legs)
+    if normal_km <= 0:
+        return 0.0
+    return float(min((blocked_km - normal_km) / normal_km, 1.0))
+
+
 # ─── Route result dataclass ───────────────────────────────────────────────────
 
 class Route:
@@ -233,14 +264,14 @@ class Route:
         self.path           = path
         self.cost           = cost
         self.hops           = len(path) - 1
-        self.chk_exposure   = chokepoint_exposure(path)
+        self.chk_exposure   = maritime_chokepoint_exposure(path)
         self._blocked_wps   = blocked_wps
         self.lead_time_days = self._estimate_lead_time(graph, median_lsci)
         self.has_predicted  = self._check_predicted(graph)
 
     def _estimate_lead_time(self, G: nx.DiGraph, median_lsci: float) -> float:
         """
-        Lead time = (total maritime sailing distance / avg ship speed) + port handling.
+        Lead time = total maritime sailing distance / avg ship speed + port handling.
 
         Methodology
         -----------
@@ -251,13 +282,13 @@ class Route:
           distance reflects the detour (e.g. Cape of Good Hope when Suez is
           blocked), giving a physically accurate lead time.
         - Average container ship speed: 15 knots ≈ 667 km/day.
-        - Port handling: 0.75 days per intermediate stop.
+        - Port handling: 2.5 days per intermediate transshipment stop
+          (unloading ~0.5d + storage/customs ~1.5d + reloading ~0.5d).
         """
         days = 0.0
         for u, v in zip(self.path[:-1], self.path[1:]):
             dist_km = _maritime_leg_km(u, v, self._blocked_wps)
             days += dist_km / _SHIP_SPEED_KM_PER_DAY
-        # Add port handling for every stop except the final destination
         intermediate_stops = max(0, len(self.path) - 2)
         days += intermediate_stops * _PORT_DAYS_PER_STOP
         return round(days, 1)

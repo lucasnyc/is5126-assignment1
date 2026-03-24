@@ -217,12 +217,13 @@ def make_route_globe(
     if blocked_chokepoints:
         b_lats, b_lons, b_names = [], [], []
         for cp in blocked_chokepoints:
-            for wp in CHOKEPOINT_WAYPOINTS.get(cp, []):
-                coord = MARITIME_WAYPOINTS.get(wp)
-                if coord:
-                    b_lats.append(coord[0])
-                    b_lons.append(coord[1])
-                    b_names.append(cp)
+            coords = [MARITIME_WAYPOINTS[wp]
+                      for wp in CHOKEPOINT_WAYPOINTS.get(cp, [])
+                      if wp in MARITIME_WAYPOINTS]
+            if coords:
+                b_lats.append(sum(c[0] for c in coords) / len(coords))
+                b_lons.append(sum(c[1] for c in coords) / len(coords))
+                b_names.append(cp)
         if b_lats:
             fig.add_trace(go.Scattergeo(
                 lat=b_lats, lon=b_lons,
@@ -316,12 +317,13 @@ def make_multi_criteria_globe(
     if blocked_chokepoints:
         b_lats, b_lons, b_names = [], [], []
         for cp in blocked_chokepoints:
-            for wp in CHOKEPOINT_WAYPOINTS.get(cp, []):
-                coord = MARITIME_WAYPOINTS.get(wp)
-                if coord:
-                    b_lats.append(coord[0])
-                    b_lons.append(coord[1])
-                    b_names.append(cp)
+            coords = [MARITIME_WAYPOINTS[wp]
+                      for wp in CHOKEPOINT_WAYPOINTS.get(cp, [])
+                      if wp in MARITIME_WAYPOINTS]
+            if coords:
+                b_lats.append(sum(c[0] for c in coords) / len(coords))
+                b_lons.append(sum(c[1] for c in coords) / len(coords))
+                b_names.append(cp)
         if b_lats:
             fig.add_trace(go.Scattergeo(
                 lat=b_lats, lon=b_lons,
@@ -489,50 +491,65 @@ def make_route_radar(routes: dict) -> go.Figure:
     """
     Build a radar (spider) chart comparing up to 3 routes across 5 dimensions.
 
-    Each axis is normalised to 0-100 where higher = better, so the chart is
-    intuitive: a larger polygon is a better route overall.
+    Axes are chosen to guarantee visual differentiation between the three route
+    criteria (cheapest / fastest / most resilient):
+      1. Resilience Score   — composite RS (0–100), highest for most_resilient
+      2. Affordability      — relative inverted cost, highest for cheapest
+      3. Speed              — relative inverted lead time, highest for fastest
+      4. Chokepoint Safety  — 1 − chokepoint exposure (0–100)
+      5. Political Safety   — geopolitical risk component (0–100)
+
+    Axes 2 and 3 are normalised relative to the compared routes so differences
+    are always visible (scaled to [20, 100]).
 
     Parameters
     ----------
     routes : dict[str, Route]
         Keys are criteria names (e.g. "most_resilient"), values are Route objects.
     """
-    categories = ["Resilience", "Cost Efficiency", "Speed", "On-Time Reliability", "Chokepoint Safety"]
+    categories = [
+        "Resilience Score",
+        "Affordability",
+        "Speed",
+        "Chokepoint Safety",
+        "Political Safety",
+    ]
 
-    # Collect raw values across all routes for normalisation
-    all_costs = [r.cost for r in routes.values()]
-    all_lt    = [r.lead_time_days for r in routes.values()]
-    all_chk   = [r.chk_exposure for r in routes.values()]
+    # Collect range data for relative normalisation of cost and lead time.
+    costs = [r.cost            for r in routes.values()]
+    lts   = [r.lead_time_days  for r in routes.values()]
+    cost_lo, cost_hi = min(costs), max(costs)
+    lt_lo,   lt_hi   = min(lts),   max(lts)
 
-    max_cost = max(all_costs) if max(all_costs) > 0 else 1
-    max_lt   = max(all_lt)   if max(all_lt)   > 0 else 1
-    max_chk  = max(all_chk)  if max(all_chk)  > 0 else 1
+    def _norm_inv(val, lo, hi):
+        """Lower raw value → higher score. Maps to [20, 100]."""
+        if hi - lo < 1e-9:
+            return 60.0          # all routes equal on this dimension
+        return 20.0 + (1.0 - (val - lo) / (hi - lo)) * 80.0
 
     fig = go.Figure()
 
     for crit_key, r in routes.items():
-        label = CRITERIA_LABELS.get(crit_key, crit_key)
-        color = CRITERIA_COLORS.get(crit_key, "#ccc")
-
-        # On-Time Reliability: rel component from RS detail (0→100).
-        # Falls back to 50 if rs_detail is not available.
-        rel_score = getattr(r, "rs_detail", {}).get("rel", 0.5) * 100
+        label  = CRITERIA_LABELS.get(crit_key, crit_key)
+        color  = CRITERIA_COLORS.get(crit_key, "#ccc")
+        detail = getattr(r, "rs_detail", {})
 
         values = [
-            r.rs,                                                               # Resilience (0–100)
-            (1 - r.cost / max_cost) * 100 if max_cost > 0 else 100,           # Cost Efficiency
-            (1 - r.lead_time_days / max_lt) * 100 if max_lt > 0 else 100,     # Speed
-            rel_score,                                                          # On-Time Reliability
-            (1 - r.chk_exposure / max_chk) * 100 if max_chk > 0 else 100,     # Chokepoint Safety
+            float(r.rs),                                       # Resilience Score
+            _norm_inv(r.cost,           cost_lo, cost_hi),    # Affordability
+            _norm_inv(r.lead_time_days, lt_lo,   lt_hi),      # Speed
+            (1.0 - float(r.chk_exposure)) * 100.0,            # Chokepoint Safety
+            detail.get("sec", 0.5) * 100.0,                   # Political Safety
         ]
-        # Close the polygon
-        values.append(values[0])
 
+        # Do NOT manually close the polygon — fill="toself" closes the fill
+        # automatically, and avoiding the repeated first point prevents a
+        # spurious coloured line overlaid on the first axis spoke.
         fig.add_trace(go.Scatterpolar(
             r=values,
-            theta=categories + [categories[0]],
+            theta=categories,
             fill="toself",
-            fillcolor=f"rgba({int(color[1:3],16)},{int(color[3:5],16)},{int(color[5:7],16)},0.13)",
+            fillcolor=f"rgba({int(color[1:3],16)},{int(color[3:5],16)},{int(color[5:7],16)},0.18)",
             line=dict(color=color, width=2),
             name=label,
             hovertemplate=(

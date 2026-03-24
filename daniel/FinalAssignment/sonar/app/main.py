@@ -20,7 +20,8 @@ sys.path.insert(0, ROOT)
 
 from config import PRODUCT_CODES, PRODUCT_NAMES, LATEST_YEAR, TOP_CORRIDORS
 from src.graph.builder import load_latest_graphs_cache, build_latest_graphs
-from src.graph.routing import find_k_routes
+from src.graph.routing import find_k_routes, find_multi_criteria_routes
+from src.viz.globe import make_multi_criteria_globe
 from src.graph.chokepoints import get_tariff_multipliers
 from src.models.predictor import load_edges
 from src.scoring.resilience import ResilienceScorer
@@ -115,6 +116,51 @@ if "scorer" not in st.session_state:
 if "heatmap_baseline" not in st.session_state:
     st.session_state.heatmap_baseline = _compute_heatmap_baseline()
 
+# ── Preload default route: China → United States, Telephones & Electronics ────
+# Populates the route explorer's session-state caches so the first render of
+# that page is instant — no computation happens when the mode selector shows.
+if "_re_routes_cache" not in st.session_state:
+    st.session_state["_re_routes_cache"] = {}
+if "_re_globe_cache" not in st.session_state:
+    st.session_state["_re_globe_cache"] = {}
+
+_PRE_ORIGIN   = "China"
+_PRE_DEST     = "United States"
+_PRE_PRODUCT  = 8517          # Telephones & Electronics
+_PRE_YEAR     = LATEST_YEAR
+_PRE_GRAPHS   = st.session_state.graphs
+_PRE_SCORER   = st.session_state.scorer
+_PRE_GKEY     = (_PRE_YEAR, _PRE_PRODUCT)
+
+if _PRE_GKEY in _PRE_GRAPHS:
+    _PRE_G = _PRE_GRAPHS[_PRE_GKEY]
+    _pre_all_lsci    = [_PRE_G.nodes[n].get("lsci", 0) for n in _PRE_G.nodes()]
+    _pre_median_lsci = float(pd.Series(_pre_all_lsci).replace(0, pd.NA).median() or 50.0)
+    # Two keys: (a) zero-tariff used during mode selection,
+    #           (b) US-tariff=10 used once expert/guided sidebar appears
+    for _pre_us in (0, 10):
+        _pre_cache_key = (_PRE_ORIGIN, _PRE_DEST, _PRE_PRODUCT, _PRE_YEAR,
+                          (), _pre_us, 0, 0, 0)
+        if _pre_cache_key not in st.session_state["_re_routes_cache"]:
+            try:
+                _pre_routes = find_multi_criteria_routes(
+                    _PRE_G, _PRE_ORIGIN, _PRE_DEST, _PRE_SCORER,
+                    k_candidates=20, median_lsci=_pre_median_lsci,
+                    blocked_wps=frozenset(),
+                )
+                st.session_state["_re_routes_cache"][_pre_cache_key] = _pre_routes
+                _pre_criteria = {k: r.to_dict() for k, r in _pre_routes.items()
+                                 if not k.startswith("_")}
+                st.session_state["_re_globe_cache"][_pre_cache_key] = (
+                    _pre_criteria,
+                    make_multi_criteria_globe(
+                        criteria_routes=_pre_criteria,
+                        blocked_chokepoints=[],
+                    ),
+                )
+            except (nx.NetworkXNoPath, nx.NodeNotFound):
+                pass
+
 # ── Data refs ─────────────────────────────────────────────────────────────────
 edges  = st.session_state.edges
 graphs = st.session_state.graphs
@@ -141,7 +187,7 @@ st.markdown("""
         Strategic supply chain planning tool for profit-driven companies.
         Compare trade corridors, quantify disruption risk in dollars, and identify
         your best sourcing strategy — powered by UNCTAD bilateral trade data,
-        ML-imputed freight rates, and AHP-weighted resilience scoring across 375K+ corridors.
+        ML-imputed freight rates, and resilience scoring across 375K+ corridors.
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -180,58 +226,160 @@ with c5:
 
 # ── Navigation cards ──────────────────────────────────────────────────────────
 st.write("")
-section_header("", "Explore", "Select a module from the sidebar to begin")
+section_header("", "Explore", "Click any card to open that module")
 
+_nav_tiles = [
+    ("pages/01_route_explorer.py",      "#4A90D9", "🗺",  "Route Explorer",
+     "Compare the most resilient, cheapest, and fastest routes between any two countries. "
+     "Simulate chokepoint closures and tariff shocks in real-time, or let the guided wizard "
+     "recommend the best route for your business profile."),
+    ("pages/02_resilience_analysis.py", "#27AE60", "📊", "Resilience Analysis",
+     "Heatmap view of resilience scores across the top 20 global trade corridors and "
+     "5 product categories. Drill down into all 5 score components — Delivery Confidence, "
+     "Backup Options, Weather Safety, Port Health, and Security Level."),
+    ("pages/03_compare_corridors.py",   "#58a6ff", "🌐",  "Nearshoring Strategy",
+     "Fix your manufacturing origin and target market, then compare shipping direct vs. "
+     "routing through an intermediate hub country. Stress-test each strategy under tariff "
+     "shocks and chokepoint closures to find your most resilient expansion path."),
+    ("pages/04_model_insights.py",      "#F5A623", "🔍", "Model Insights",
+     "Understand why the XGBoost model predicted a specific freight rate. Inspect per-edge "
+     "SHAP-style feature importance, global gain rankings, and held-out test performance "
+     "with design decision rationale."),
+    ("pages/05_score_methodology.py",   "#9B59B6", "🛡",  "Score Methodology",
+     "Full explanation of the 5-factor resilience model with equal weights. Understand how "
+     "each factor is calculated and how to interpret scores for any corridor."),
+]
+
+# ── Tile CSS ──────────────────────────────────────────────────────────────────
 st.markdown("""
-<div style="display:flex;gap:16px;margin:8px 0 28px 0">
-    <div class="nav-card" style="border-top:3px solid #4A90D9">
-        <div class="nav-icon">🗺</div>
-        <div class="nav-title">Route Explorer</div>
-        <div class="nav-desc">
-            Compare the most resilient, cheapest, and fastest routes between
-            any two countries. Simulate chokepoint closures and tariff shocks in real-time,
-            or let the guided wizard recommend the best route for your business profile.
-        </div>
-    </div>
-    <div class="nav-card" style="border-top:3px solid #27AE60">
-        <div class="nav-icon">📊</div>
-        <div class="nav-title">Resilience Analysis</div>
-        <div class="nav-desc">
-            Heatmap view of resilience scores across the top 20 global trade corridors
-            and 5 product categories. Drill down into all 5 score components —
-            Delivery Confidence, Backup Options, Weather Safety, Port Health, and Security Level.
-        </div>
-    </div>
-    <div class="nav-card" style="border-top:3px solid #9B59B6">
-        <div class="nav-icon">🛡</div>
-        <div class="nav-title">Resilience Score</div>
-        <div class="nav-desc">
-            Full explanation of the 5-factor AHP-weighted resilience model.
-            Understand how each factor is calculated, why the weights were chosen,
-            and how to interpret scores for any corridor.
-        </div>
-    </div>
-    <div class="nav-card" style="border-top:3px solid #F5A623">
-        <div class="nav-icon">🔍</div>
-        <div class="nav-title">Model Explainability</div>
-        <div class="nav-desc">
-            Understand why the XGBoost model predicted a specific freight rate.
-            Inspect per-edge SHAP-style feature importance, global gain rankings,
-            and held-out test performance with design decision rationale.
-        </div>
-    </div>
-    <div class="nav-card" style="border-top:3px solid #58a6ff">
-        <div class="nav-icon">⚖</div>
-        <div class="nav-title">Corridor Comparison</div>
-        <div class="nav-desc">
-            Compare 2–4 trade lanes side by side across all planning metrics:
-            Resilience Score, freight cost, lead time, rate volatility, and
-            chokepoint exposure. Rank by your own priority weights to identify
-            the best sourcing strategy.
-        </div>
-    </div>
-</div>
+<style>
+/* ── Wrapper chain: make all 5 columns the same height ───────────────────── */
+div[data-testid="stHorizontalBlock"] {
+    align-items: stretch !important;
+    gap: 14px !important;
+}
+div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+    display: flex !important;
+    flex-direction: column !important;
+    flex: 1 1 0 !important;
+    min-width: 0 !important;
+    padding: 0 !important;
+}
+div[data-testid="stHorizontalBlock"] > div[data-testid="column"] > div[data-testid="stVerticalBlock"],
+div[data-testid="stHorizontalBlock"] > div[data-testid="column"] div[data-testid="stButton"] {
+    display: flex !important;
+    flex-direction: column !important;
+    flex: 1 !important;
+}
+/* ── Button = the card ───────────────────────────────────────────────────── */
+div[data-testid="stHorizontalBlock"] div[data-testid="stButton"] button {
+    background: linear-gradient(160deg, #1a2030 0%, #161b22 60%) !important;
+    border: 1px solid #2a3140 !important;
+    border-radius: 14px !important;
+    width: 100% !important;
+    flex: 1 !important;
+    text-align: left !important;
+    padding: 26px 22px 24px !important;
+    cursor: pointer !important;
+    display: flex !important;
+    align-items: flex-start !important;
+    white-space: normal !important;
+    transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s, background 0.2s !important;
+    position: relative !important;
+    overflow: hidden !important;
+}
+/* subtle shimmer line at top-right corner */
+div[data-testid="stHorizontalBlock"] div[data-testid="stButton"] button::after {
+    content: "→" !important;
+    position: absolute !important;
+    bottom: 18px !important;
+    right: 20px !important;
+    font-size: 16px !important;
+    opacity: 0 !important;
+    transition: opacity 0.2s, transform 0.2s !important;
+    transform: translateX(-4px) !important;
+}
+div[data-testid="stHorizontalBlock"] div[data-testid="stButton"] button:hover {
+    transform: translateY(-3px) !important;
+    background: linear-gradient(160deg, #1e2a3a 0%, #1a2030 60%) !important;
+}
+div[data-testid="stHorizontalBlock"] div[data-testid="stButton"] button:hover::after {
+    opacity: 0.5 !important;
+    transform: translateX(0) !important;
+}
+/* Inner markdown container */
+div[data-testid="stHorizontalBlock"] div[data-testid="stButton"] button > div {
+    width: 100% !important;
+}
+/* Icon */
+div[data-testid="stHorizontalBlock"] div[data-testid="stButton"] button p:first-child {
+    font-size: 30px !important;
+    line-height: 1 !important;
+    margin: 0 0 16px 0 !important;
+    display: block !important;
+}
+/* Title */
+div[data-testid="stHorizontalBlock"] div[data-testid="stButton"] button p:nth-child(2) {
+    font-size: 15px !important;
+    font-weight: 700 !important;
+    color: #e6edf3 !important;
+    margin: 0 0 10px 0 !important;
+    line-height: 1.25 !important;
+    letter-spacing: -0.1px !important;
+}
+/* Description */
+div[data-testid="stHorizontalBlock"] div[data-testid="stButton"] button p:last-child {
+    font-size: 12px !important;
+    color: #7d8590 !important;
+    line-height: 1.7 !important;
+    font-weight: 400 !important;
+    margin: 0 !important;
+}
+/* Per-tile top accent + hover glow */
+div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:nth-child(1) button {
+    border-top: 3px solid #4A90D9 !important;
+}
+div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:nth-child(1) button:hover {
+    border-color: #4A90D9 !important;
+    box-shadow: 0 8px 32px rgba(74,144,217,0.18) !important;
+}
+div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:nth-child(2) button {
+    border-top: 3px solid #27AE60 !important;
+}
+div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:nth-child(2) button:hover {
+    border-color: #27AE60 !important;
+    box-shadow: 0 8px 32px rgba(39,174,96,0.18) !important;
+}
+div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:nth-child(3) button {
+    border-top: 3px solid #58a6ff !important;
+}
+div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:nth-child(3) button:hover {
+    border-color: #58a6ff !important;
+    box-shadow: 0 8px 32px rgba(88,166,255,0.18) !important;
+}
+div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:nth-child(4) button {
+    border-top: 3px solid #F5A623 !important;
+}
+div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:nth-child(4) button:hover {
+    border-color: #F5A623 !important;
+    box-shadow: 0 8px 32px rgba(245,166,35,0.18) !important;
+}
+div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:nth-child(5) button {
+    border-top: 3px solid #9B59B6 !important;
+}
+div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:nth-child(5) button:hover {
+    border-color: #9B59B6 !important;
+    box-shadow: 0 8px 32px rgba(155,89,182,0.18) !important;
+}
+</style>
 """, unsafe_allow_html=True)
+
+_tile_cols = st.columns(5)
+for _col, (_page, _color, _icon, _title, _desc) in zip(_tile_cols, _nav_tiles):
+    with _col:
+        _label = f"{_icon}\n\n**{_title}**\n\n{_desc}"
+        if st.button(_label, key=f"nav_{_title}", use_container_width=True):
+            st.switch_page(_page)
 
 # ── How It Works ──────────────────────────────────────────────────────────────
 section_header("", "How It Works", "5-stage analytical pipeline")
@@ -251,8 +399,8 @@ _steps = [
      "Applies chokepoint closures and tariff multipliers in real-time — reroutes around "
      "blocked nodes and reprices affected edges instantly."),
     ("5", "Resilience Score", "#9B59B6",
-     "A 0\u2013100 composite index via AHP-TOPSIS (Saaty 1980): "
-     "RS = 100 \u00d7 (0.37\u00b7Rel + 0.21\u00b7Flex + 0.21\u00b7Env + 0.11\u00b7Port + 0.10\u00b7Sec), CR = 0.003."),
+     "A 0\u2013100 composite index with equal weights (0.20 each) across five factors: "
+     "RS = 100 \u00d7 (0.20\u00b7Rel + 0.20\u00b7Flex + 0.20\u00b7Env + 0.20\u00b7Port + 0.20\u00b7Sec)."),
 ]
 
 cols = st.columns(5)

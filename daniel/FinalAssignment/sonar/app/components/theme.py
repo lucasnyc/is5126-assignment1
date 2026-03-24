@@ -95,11 +95,12 @@ h1, h2, h3, h4, p, label, .stMarkdown { color: %(text)s !important; }
     border: 1px solid %(border)s;
     border-radius: 12px;
     padding: 28px 24px;
-    height: 220px;
+    height: 100%%;
+    min-height: 240px;
     box-sizing: border-box;
     display: flex; flex-direction: column;
     transition: border-color 0.25s, box-shadow 0.25s, transform 0.25s;
-    cursor: default;
+    cursor: pointer;
 }
 .nav-card:hover {
     border-color: %(border_hover)s;

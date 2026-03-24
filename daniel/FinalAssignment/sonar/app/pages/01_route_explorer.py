@@ -45,33 +45,54 @@ scorer = st.session_state.scorer
 sample_graph  = graphs[(2021, 8517)]
 ALL_COUNTRIES = sorted(sample_graph.nodes())
 
-# ── Sidebar ───────────────────────────────────────────────────────────────────
+# ── Sidebar — only shown once mode is committed and (for guided) wizard is done ─
+_sidebar_active = (
+    st.session_state.get("explorer_mode") == "expert"
+    or (
+        st.session_state.get("explorer_mode") == "guided"
+        and st.session_state.get("wiz_done", False)
+    )
+)
+
 with st.sidebar:
-    st.markdown("## 🔧 Route Configuration")
-    origin = st.selectbox(
-        "Origin Country", ALL_COUNTRIES,
-        index=ALL_COUNTRIES.index("China") if "China" in ALL_COUNTRIES else 0,
-    )
-    destination = st.selectbox(
-        "Destination Country", ALL_COUNTRIES,
-        index=ALL_COUNTRIES.index("United States") if "United States" in ALL_COUNTRIES else 1,
-    )
-    product_label = st.selectbox("Product", list(PRODUCT_NAMES.values()))
-    product_code  = [k for k, v in PRODUCT_NAMES.items() if v == product_label][0]
-    year = LATEST_YEAR
+    if _sidebar_active:
+        st.markdown("## 🔧 Route Configuration")
+        origin = st.selectbox(
+            "Origin Country", ALL_COUNTRIES,
+            index=ALL_COUNTRIES.index("China") if "China" in ALL_COUNTRIES else 0,
+        )
+        destination = st.selectbox(
+            "Destination Country", ALL_COUNTRIES,
+            index=ALL_COUNTRIES.index("United States") if "United States" in ALL_COUNTRIES else 1,
+        )
+        product_label = st.selectbox("Product", list(PRODUCT_NAMES.values()))
+        product_code  = [k for k, v in PRODUCT_NAMES.items() if v == product_label][0]
+        year = LATEST_YEAR
 
-    st.markdown("---")
-    st.markdown("## 🚨 Chokepoint Scenarios")
-    blocked = [cp for cp in CHOKEPOINTS if st.checkbox(cp, key=f"cp_{cp}")]
+        st.markdown("---")
+        st.markdown("## 🚨 Chokepoint Scenarios")
+        blocked = [cp for cp in CHOKEPOINTS if st.checkbox(cp, key=f"cp_{cp}")]
 
-    st.markdown("---")
-    st.markdown("## 💹 Tariff Scenarios")
-    us_tariff    = st.slider("US Tariff (%)",    0, 50, 10, step=5)
-    eu_tariff    = st.slider("EU Tariff (%)",    0, 50,  0, step=5)
-    china_tariff = st.slider("China Tariff (%)", 0, 50,  0, step=5)
-    asean_tariff = st.slider("ASEAN Tariff (%)", 0, 50,  0, step=5)
+        st.markdown("---")
+        st.markdown("## 💹 Tariff Scenarios")
+        us_tariff    = st.slider("US Tariff (%)",    0, 50, 10, step=5)
+        eu_tariff    = st.slider("EU Tariff (%)",    0, 50,  0, step=5)
+        china_tariff = st.slider("China Tariff (%)", 0, 50,  0, step=5)
+        asean_tariff = st.slider("ASEAN Tariff (%)", 0, 50,  0, step=5)
 
-    st.markdown("---")
+        st.markdown("---")
+    else:
+        # Defaults used while mode selector or guided wizard are active
+        origin        = ALL_COUNTRIES[ALL_COUNTRIES.index("China")] if "China" in ALL_COUNTRIES else ALL_COUNTRIES[0]
+        destination   = ALL_COUNTRIES[ALL_COUNTRIES.index("United States")] if "United States" in ALL_COUNTRIES else ALL_COUNTRIES[1]
+        product_label = list(PRODUCT_NAMES.values())[0]
+        product_code  = list(PRODUCT_NAMES.keys())[0]
+        year          = LATEST_YEAR
+        blocked       = []
+        us_tariff     = 0
+        eu_tariff     = 0
+        china_tariff  = 0
+        asean_tariff  = 0
 
 # ── Header ─────────────────────────────────────────────────────────────────────
 if st.session_state.get("explorer_mode") is not None:
@@ -83,7 +104,8 @@ if st.session_state.get("explorer_mode") is not None:
         st.rerun()
 
 st.markdown("# 🗺 Route Explorer")
-st.caption(f"**{origin}** → **{destination}** | {product_label} | Latest data ({year})")
+if _sidebar_active:
+    st.caption(f"**{origin}** → **{destination}** | {product_label} | Latest data ({year})")
 
 if origin == destination:
     st.warning("Please select different origin and destination countries.")
@@ -913,7 +935,7 @@ def _build_report_html(
   <p style="margin-top:40px;font-size:11px;color:#8B949E">
     SONAR — Supply-chain Optimization and Network Analysis for Resilience.<br>
     Data: UNCTAD 2016–2021. Freight rates partially ML-imputed (XGBoost).
-    Resilience scores use AHP-TOPSIS (CR=0.003). This report is for planning purposes only.
+    Resilience scores use equal-weighted composite scoring. This report is for planning purposes only.
   </p>
 </body>
 </html>"""

@@ -344,20 +344,7 @@ MAX_WEIGHT        = 999.0 # sentinel weight for non-existent edges (not added to
 
 # ─── Resilience Score weights ─────────────────────────────────────────────────
 # 5-factor model aligned with maritime resilience literature.
-# Derived via Analytic Hierarchy Process (AHP, Saaty 1980).
-#
-# Pairwise comparison matrix (scale 1–9, rows dominate columns):
-#
-#         Rel   Flex  Env   Port  Sec
-#  Rel  [  1     2    2     3     3  ]   Delivery reliability is the primary
-#  Flex [ 1/2    1    1     2     2  ]   resilience driver (PDF §4, §10).
-#  Env  [ 1/2    1    1     2     2  ]   Weather elevated per professor's
-#  Port [ 1/3   1/2  1/2    1     1  ]   recommendation (PDF §1).
-#  Sec  [ 1/3   1/2  1/2    1     1  ]
-#
-# Priority vector (eigenvector method):
-#   Rel=0.37, Flex=0.21, Env=0.21, Port=0.11, Sec=0.10
-# Consistency Ratio CR = 0.003 < 0.10  →  highly consistent (Saaty).
+# Equal weights (0.20 each) across all five factors.
 #
 # References:
 #   - Rel: Carrier Performance & E-commerce Lead Time Reliability (PDF §4)
@@ -365,11 +352,11 @@ MAX_WEIGHT        = 999.0 # sentinel weight for non-existent edges (not added to
 #   - Env: Environmental Stability Index (PDF §1, professor's suggestion)
 #   - Port: Nodal Congestion Risk (PDF §2)
 #   - Sec: Geopolitical and Infrastructure Security (PDF §5)
-RS_WEIGHT_REL  = 0.37   # delivery confidence    (AHP priority vector)
-RS_WEIGHT_FLEX = 0.21   # backup options
-RS_WEIGHT_ENV  = 0.21   # weather safety
-RS_WEIGHT_PORT = 0.11   # port health
-RS_WEIGHT_SEC  = 0.10   # security level
+RS_WEIGHT_REL  = 0.20   # delivery confidence
+RS_WEIGHT_FLEX = 0.20   # backup options
+RS_WEIGHT_ENV  = 0.20   # weather safety
+RS_WEIGHT_PORT = 0.20   # port health
+RS_WEIGHT_SEC  = 0.20   # security level
 # Sum = 1.00 ✓
 
 # ─── City → Country mapping (disruption dataset) ─────────────────────────────

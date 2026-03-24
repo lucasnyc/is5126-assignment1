@@ -12,9 +12,8 @@ Components (explainable user labels):
     Port — Port Health         : port infrastructure capacity & congestion
     Sec  — Security Level      : geopolitical risk & conflict exposure
 
-Weights derived via Analytic Hierarchy Process (AHP, Saaty 1980).
-5×5 pairwise matrix, Consistency Ratio CR = 0.003 < 0.10.
-See config.py for the full matrix and references.
+Equal weights (0.20 each) across all five factors.
+See config.py for the weight constants.
 """
 
 import os
@@ -28,9 +27,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from config import (
     RS_WEIGHT_REL, RS_WEIGHT_FLEX, RS_WEIGHT_ENV,
     RS_WEIGHT_PORT, RS_WEIGHT_SEC,
-    ALL_CHOKEPOINT_COUNTRIES, CONSTANTS_PATH,
+    CONSTANTS_PATH,
 )
-from src.graph.chokepoints import chokepoint_exposure
+from src.graph.routing import maritime_chokepoint_exposure
 
 
 def _load_constants() -> dict:
@@ -108,8 +107,8 @@ class ResilienceScorer:
             premium = (cost_k2 - cost_k1) / (cost_k1 + 1e-9)
             alt = float(max(0.0, 1.0 - premium))
 
-        # Chk sub-component
-        chk = float(1.0 - chokepoint_exposure(path))
+        # Chk sub-component — maritime detour ratio if all chokepoints blocked
+        chk = float(1.0 - maritime_chokepoint_exposure(path))
 
         return float(np.clip(0.60 * alt + 0.40 * chk, 0.0, 1.0))
 
