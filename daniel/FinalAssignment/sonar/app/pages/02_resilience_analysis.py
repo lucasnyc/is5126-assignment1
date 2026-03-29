@@ -60,6 +60,13 @@ with st.sidebar:
 
 st.markdown("# \U0001f4ca Resilience Analysis")
 st.caption("Compare route resilience across the top global trade corridors.")
+st.info(
+    "Use the heatmap to benchmark resilience across the top global trade corridors. "
+    "Drill down into any corridor below to see which of the 5 factors (Reliability, "
+    "Redundancy, Weather, Ports, Security) is driving its score — "
+    "then adjust the scenario controls to stress-test under tariffs or chokepoint closures.",
+    icon="💡",
+)
 
 # ─── Resolve active corridor / product slice ──────────────────────────────────
 active_corridors = TOP_CORRIDORS[:n_corridors]
@@ -129,6 +136,10 @@ with tab_heatmap:
         title=f"Resilience Scores \u2014 Top {n_corridors} Corridors ({year})"
     )
     st.plotly_chart(heatmap_fig, width='stretch')
+    st.caption(
+        "See a corridor with an unexpected score? Select it in the "
+        "Drill Down section below to see which component is driving it."
+    )
 
 with tab_tiers:
     section_header("\U0001f4d0", "Planning Tier View",
@@ -332,9 +343,17 @@ st.download_button(
 # ─── Component analysis for selected corridor ─────────────────────────────────
 st.markdown("---")
 section_header("\U0001f50d", "Drill Down: Score Components")
+_corridor_options = [f"{o} \u2192 {d}" for o, d in active_corridors]
+_top_corridor = None
+if data:
+    _df_tmp = pd.DataFrame(data).sort_values("score", ascending=False)
+    if not _df_tmp.empty:
+        _top_corridor = f"{_df_tmp.iloc[0]['origin']} \u2192 {_df_tmp.iloc[0]['destination']}"
+_default_idx = _corridor_options.index(_top_corridor) if _top_corridor in _corridor_options else 0
 chosen_corridor = st.selectbox(
     "Select corridor to analyze",
-    [f"{o} \u2192 {d}" for o, d in active_corridors]
+    _corridor_options,
+    index=_default_idx,
 )
 chosen_product   = st.selectbox("Product", list(PRODUCT_NAMES.values()), key="dd_prod")
 chosen_prod_code = [k for k, v in PRODUCT_NAMES.items() if v == chosen_product][0]

@@ -125,7 +125,7 @@ if "_re_globe_cache" not in st.session_state:
     st.session_state["_re_globe_cache"] = {}
 
 _PRE_ORIGIN   = "China"
-_PRE_DEST     = "United States"
+_PRE_DEST     = "Germany"
 _PRE_PRODUCT  = 8517          # Telephones & Electronics
 _PRE_YEAR     = LATEST_YEAR
 _PRE_GRAPHS   = st.session_state.graphs

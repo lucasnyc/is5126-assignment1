@@ -1,14 +1,14 @@
 """
-Nearshoring Strategy Comparison
+Corridor Comparison
 
-Helps supply chain planners decide WHERE to anchor intermediate operations
-when expanding into a new market.
+Helps supply chain planners compare shipping strategies for a specific
+origin-destination pair.
 
-The planner fixes an origin (manufacturing base) and a target market, then
-compares supply chain configurations:
+The planner fixes an origin and a destination, then compares supply chain
+configurations:
   - Direct shipping (baseline)
-  - Via Hub Country A  (e.g. set up a distribution centre in Mexico)
-  - Via Hub Country B  (e.g. set up a factory in Brazil)
+  - Via Hub Country A  (e.g. routing through Mexico)
+  - Via Hub Country B  (e.g. routing through Brazil)
   ...
 
 Each configuration is stress-tested under tariff and chokepoint scenarios so
@@ -38,7 +38,7 @@ from src.viz.globe import COLORS, make_route_radar
 from app.components.theme import inject_global_css, section_header, render_footer
 
 st.set_page_config(
-    page_title="Nearshoring Strategy · SONAR",
+    page_title="Compare Corridors · SONAR",
     layout="wide",
     page_icon="🌐",
 )
@@ -81,26 +81,26 @@ _STRATEGY_COLORS = ["#4A90D9", "#27AE60", "#F5A623", "#E74C3C"]
 MEDAL = ["🥇", "🥈", "🥉", "4️⃣"]
 
 # ─── Header ───────────────────────────────────────────────────────────────────
-st.markdown("# 🌐 Nearshoring Strategy Comparison")
+st.markdown("# 🌐 Compare Corridors")
 st.caption(
-    "Fix your manufacturing origin and target market. "
-    "Compare direct shipping against routing through an intermediate hub country — "
-    "then stress-test each strategy under tariff and chokepoint disruptions."
+    "Choose your origin and destination, then compare shipping strategies "
+    "head-to-head — direct routes, via-hub configurations, and custom options — "
+    "stress-tested under tariff shocks and chokepoint closures."
 )
 
 # ─── Sidebar ──────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("## 🌐 Strategy Setup")
-    st.markdown("### Market Expansion Goal")
+    st.markdown("## 🌐 Compare Corridors")
+    st.markdown("### Route Configuration")
 
     origin = st.selectbox(
-        "Manufacturing Origin",
+        "Origin",
         ALL_COUNTRIES,
         index=ALL_COUNTRIES.index("China") if "China" in ALL_COUNTRIES else 0,
         key="ns_origin",
     )
     destination = st.selectbox(
-        "Target Market",
+        "Destination",
         ALL_COUNTRIES,
         index=ALL_COUNTRIES.index("United States") if "United States" in ALL_COUNTRIES else 1,
         key="ns_dest",
@@ -128,15 +128,15 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("### Priority Weights")
-    st.caption("What matters most to your expansion decision?")
+    st.caption("What matters most to your routing decision?")
     w_rs   = st.slider("Resilience Score",    0, 10, 5, key="ns_w_rs")
     w_cost = st.slider("Freight Cost",        0, 10, 4, key="ns_w_cost")
     w_lt   = st.slider("Speed",               0, 10, 3, key="ns_w_lt")
-    w_chk  = st.slider("Chokepoint Safety",   0, 10, 3, key="ns_w_chk")
+    w_chk  = st.slider("Redundancy",           0, 10, 3, key="ns_w_chk")
     w_vol  = st.slider("Rate Stability",      0, 10, 2, key="ns_w_vol")
 
 if origin == destination:
-    st.warning("Origin and target market must be different.")
+    st.warning("Origin and destination must be different.")
     st.stop()
 
 # ─── Build scenario graph ─────────────────────────────────────────────────────
@@ -164,13 +164,12 @@ blocked_wps = frozenset(
 
 # ─── Hub selector ─────────────────────────────────────────────────────────────
 section_header(
-    "🏭", "Select Hub Countries",
-    "Each hub = a potential factory or distribution centre location",
+    "🏭", "Hub Countries (Optional)",
+    "Add up to 3 intermediate hubs to compare against the direct route baseline",
 )
 st.caption(
-    f"Evaluate setting up intermediate operations in these countries to serve "
-    f"**{destination}** from **{origin}**. "
-    f"The direct route is always included as the baseline."
+    f"The direct route ({origin} → {destination}) is always included as the baseline. "
+    f"Add hub countries to evaluate routing via an intermediate stop."
 )
 
 _suggested = [
@@ -185,12 +184,15 @@ selected_hubs = st.multiselect(
     default=[c for c in _suggested[:2] if c in _other],
     max_selections=3,
     key="ns_hubs",
-    help="Suggestions are based on your target market. Add or swap freely.",
+    help="Suggestions are based on your destination. Add or swap freely.",
 )
 
 if not selected_hubs:
-    st.info("Select at least one hub country above to compare strategies.")
-    st.stop()
+    st.info(
+        "No hub countries selected — showing the **Direct Route** only. "
+        "Add hub countries above to compare alternative routing strategies.",
+        icon="ℹ️",
+    )
 
 # ─── Compute strategy metrics ─────────────────────────────────────────────────
 def _compute_strategies(
@@ -445,6 +447,45 @@ st.plotly_chart(fig_radar, width='stretch', config={"displayModeBar": False})
 _globe.CRITERIA_LABELS = _saved_labels
 _globe.CRITERIA_COLORS = _saved_colors
 
+# ─── RS Component Breakdown ────────────────────────────────────────────────────
+st.markdown("---")
+section_header(
+    "🔬", "Resilience Component Breakdown",
+    "Which of the 5 factors drives each strategy's RS score?",
+)
+st.caption(
+    "Each component scored 0–100. Compare across strategies to see how routing via a hub "
+    "shifts individual risk factors."
+)
+
+_comp_fig = go.Figure()
+for i, (_, row) in enumerate(df_sorted.iterrows()):
+    _detail = row.get("rs_detail", {})
+    _comps  = _detail.get("components_pct", {}) if isinstance(_detail, dict) else {}
+    if not _comps:
+        continue
+    _comp_fig.add_trace(go.Bar(
+        name=row["label"],
+        x=list(_comps.keys()),
+        y=list(_comps.values()),
+        marker_color=_STRATEGY_COLORS[i % len(_STRATEGY_COLORS)],
+        text=[f"{v:.1f}" for v in _comps.values()],
+        textposition="outside",
+        textfont=dict(color="white", size=9),
+    ))
+
+if _comp_fig.data:
+    _comp_fig.update_layout(
+        barmode="group",
+        paper_bgcolor=COLORS["paper"], plot_bgcolor=COLORS["paper"],
+        font=dict(color="white"),
+        yaxis=dict(title="Component Score (0–100)", range=[0, 115], gridcolor="#21262d"),
+        xaxis=dict(gridcolor="#21262d"),
+        legend=dict(bgcolor="#161b22", bordercolor="#21262d", borderwidth=1),
+        height=380, margin=dict(t=20),
+    )
+    st.plotly_chart(_comp_fig, width='stretch', config={"displayModeBar": False})
+
 # ─── Full metrics table ───────────────────────────────────────────────────────
 st.markdown("---")
 section_header("📋", "Full Metrics Table")
@@ -474,7 +515,7 @@ st.download_button(
     "Download Strategy Comparison as CSV",
     data=_out.to_csv(),
     file_name=(
-        f"sonar_nearshoring_{origin.replace(' ', '_')}"
+        f"sonar_corridors_{origin.replace(' ', '_')}"
         f"_to_{destination.replace(' ', '_')}.csv"
     ),
     mime="text/csv",

@@ -63,7 +63,7 @@ with st.sidebar:
         )
         destination = st.selectbox(
             "Destination Country", ALL_COUNTRIES,
-            index=ALL_COUNTRIES.index("United States") if "United States" in ALL_COUNTRIES else 1,
+            index=ALL_COUNTRIES.index("Germany") if "Germany" in ALL_COUNTRIES else 1,
         )
         product_label = st.selectbox("Product", list(PRODUCT_NAMES.values()))
         product_code  = [k for k, v in PRODUCT_NAMES.items() if v == product_label][0]
@@ -84,7 +84,7 @@ with st.sidebar:
     else:
         # Defaults used while mode selector or guided wizard are active
         origin        = ALL_COUNTRIES[ALL_COUNTRIES.index("China")] if "China" in ALL_COUNTRIES else ALL_COUNTRIES[0]
-        destination   = ALL_COUNTRIES[ALL_COUNTRIES.index("United States")] if "United States" in ALL_COUNTRIES else ALL_COUNTRIES[1]
+        destination   = ALL_COUNTRIES[ALL_COUNTRIES.index("Germany")] if "Germany" in ALL_COUNTRIES else ALL_COUNTRIES[1]
         product_label = list(PRODUCT_NAMES.values())[0]
         product_code  = list(PRODUCT_NAMES.keys())[0]
         year          = LATEST_YEAR

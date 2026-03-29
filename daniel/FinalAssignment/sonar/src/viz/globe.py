@@ -501,35 +501,34 @@ def make_route_radar(routes: dict) -> go.Figure:
     routes : dict[str, Route]
         Keys are criteria names (e.g. "most_resilient"), values are Route objects.
     """
-    categories = ["Resilience", "Cost", "Speed"]
+    categories = ["Resilience", "Affordability", "Speed"]
 
-    # Collect range data for relative normalisation of cost and lead time.
-    costs = [r.cost           for r in routes.values()]
-    lts   = [r.lead_time_days for r in routes.values()]
-    cost_lo, cost_hi = min(costs), max(costs)
-    lt_lo,   lt_hi   = min(lts),   max(lts)
+    # Fixed absolute bounds for each axis → all scores map to [0, 100].
+    COST_MAX_PCT  = 80.0   # 0–80 % freight cost  (0 % = score 100, 80 % = score 0)
+    LT_MIN_DAYS   = 10.0   # fastest plausible lead time
+    LT_MAX_DAYS   = 100.0  # slowest plausible lead time
 
-    def _norm_inv(val, lo, hi):
-        """Lower raw value → higher score. Maps to [20, 100]."""
-        if hi - lo < 1e-9:
-            return 60.0
-        return 20.0 + (1.0 - (val - lo) / (hi - lo)) * 80.0
+    def _afford_score(cost_pct):
+        return max(0.0, min(100.0, (1.0 - cost_pct / COST_MAX_PCT) * 100.0))
+
+    def _speed_score(days):
+        return max(0.0, min(100.0,
+            (1.0 - (days - LT_MIN_DAYS) / (LT_MAX_DAYS - LT_MIN_DAYS)) * 100.0))
 
     fig = go.Figure()
 
     for crit_key, r in routes.items():
         label = CRITERIA_LABELS.get(crit_key, crit_key)
         color = CRITERIA_COLORS.get(crit_key, "#ccc")
-
-        values = [
-            float(r.rs),                                    # Resilience (0–100)
-            _norm_inv(r.cost,           cost_lo, cost_hi), # Cost (higher = cheaper)
-            _norm_inv(r.lead_time_days, lt_lo,   lt_hi),   # Speed (higher = faster)
+        vals  = [
+            float(r.rs),
+            _afford_score(r.cost * 100),   # r.cost is a decimal (e.g. 0.1513)
+            _speed_score(r.lead_time_days),
         ]
 
         fig.add_trace(go.Scatterpolar(
-            r=values,
-            theta=categories,
+            r=vals + [vals[0]],
+            theta=categories + [categories[0]],
             fill="toself",
             fillcolor=f"rgba({int(color[1:3],16)},{int(color[3:5],16)},{int(color[5:7],16)},0.18)",
             line=dict(color=color, width=2),
@@ -546,7 +545,7 @@ def make_route_radar(routes: dict) -> go.Figure:
             radialaxis=dict(
                 visible=True, range=[0, 100],
                 gridcolor="#21262d", linecolor="#21262d",
-                tickfont=dict(color="#8B949E", size=10),
+                showticklabels=False, showline=False,
             ),
             angularaxis=dict(
                 gridcolor="#21262d", linecolor="#21262d",
