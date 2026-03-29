@@ -128,7 +128,7 @@ with tab_heatmap:
         data,
         title=f"Resilience Scores \u2014 Top {n_corridors} Corridors ({year})"
     )
-    st.plotly_chart(heatmap_fig, use_container_width=True)
+    st.plotly_chart(heatmap_fig, width='stretch')
 
 with tab_tiers:
     section_header("\U0001f4d0", "Planning Tier View",
@@ -232,7 +232,7 @@ with tab_tiers:
             legend=dict(bgcolor="#161b22", bordercolor="#21262d", borderwidth=1),
             height=480,
         )
-        st.plotly_chart(_scatter, use_container_width=True, config={"displayModeBar": False})
+        st.plotly_chart(_scatter, width='stretch', config={"displayModeBar": False})
 
         # Tier legend cards
         st.markdown(
@@ -267,7 +267,7 @@ with tab_tiers:
         )
         _display_tier_df["Freight Rate (%)"] = _display_tier_df["Freight Rate (%)"].round(2)
         _display_tier_df["RS Score"]         = _display_tier_df["RS Score"].round(1)
-        st.dataframe(_display_tier_df, use_container_width=True)
+        st.dataframe(_display_tier_df, width='stretch')
     else:
         st.info("Not enough freight rate data to build planning tiers for the selected corridors.")
 
@@ -320,7 +320,7 @@ table_df = (
         "label":        "Rating",
     }).reset_index(drop=True)
 )
-st.dataframe(table_df, use_container_width=True)
+st.dataframe(table_df, width='stretch')
 
 st.download_button(
     "Download as CSV",
@@ -408,6 +408,6 @@ if gkey in graphs:
             xaxis=dict(gridcolor="#21262d"),
             height=350,
         )
-        st.plotly_chart(fig_bar, use_container_width=True)
+        st.plotly_chart(fig_bar, width='stretch')
 
 render_footer()

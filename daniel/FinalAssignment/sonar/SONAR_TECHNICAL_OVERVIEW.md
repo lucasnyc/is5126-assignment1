@@ -340,29 +340,23 @@ Each component is normalised to [0, 1]. With equal exponents (0.20 each), the fo
 
 ### 7.2 Component Definitions
 
+Each factor uses a single real-world input — no internal sub-weights. All components are normalised to [0, 1]; higher = better.
+
 **Reliability (weight: 0.20)**
 
-Measures how consistently cargo arrives on time:
-
 ```
-Reliability = 0.60 × mean(on_time_delivery_rate) + 0.40 × (1 − mean(normalised_delay))
+Reliability = mean(on_time_delivery_rate across path countries)
 ```
 
-`on_time_delivery_rate` and `normalised_delay` are per-country values from the disruption dataset. Countries not in the dataset use the dataset median.
+Per-country OTD rates from the disruption dataset (10K shipments, 6 trade lanes). Countries not in the dataset use the dataset median OTD rate. Directly answers: *"Does cargo arrive when promised?"*
 
 **Redundancy (weight: 0.20)**
 
-Measures how viable the backup route is and how many chokepoints the path avoids:
-
 ```
-cost_premium      = (cost_2nd_best − cost_best) / cost_best
-route_redundancy  = max(0, 1 − cost_premium)     (no alternative route → 0)
-chokepoint_safety = 1 − chokepoint_exposure(path)
-
-Redundancy = 0.60 × route_redundancy + 0.40 × chokepoint_safety
+Redundancy = mean(LSCI / LSCI_p95 across path countries)
 ```
 
-`chokepoint_exposure` = fraction of intermediate nodes that are strategic chokepoint countries.
+LSCI = UNCTAD Liner Shipping Connectivity Index, published annually per country. Measures the number of shipping services, companies, and vessel sizes calling at each country. High LSCI → many carriers → real alternatives exist if the primary service fails. Normalised to the 95th-percentile LSCI in the dataset. Directly answers: *"If this route is disrupted, how many alternatives exist?"*
 
 **Weather (weight: 0.20)**
 
@@ -370,23 +364,23 @@ Redundancy = 0.60 × route_redundancy + 0.40 × chokepoint_safety
 Weather = 1 − mean(weather_severity across path countries)
 ```
 
-Weather severity is mapped from 48 meteorological condition strings to a [0, 1] scale per IMO/WMO hazard classifications.
+Weather severity is mapped from 48 meteorological condition strings to a [0, 1] scale per IMO/WMO hazard classifications (129K observations, 211 countries). Directly answers: *"How calm is the route?"*
 
 **Ports (weight: 0.20)**
 
 ```
-Ports = 0.60 × mean(port_throughput / max_throughput_p95) + 0.40 × (1 − mean(congestion_rate))
+Ports = mean(TEU / TEU_p95 across path countries)
 ```
 
-Port throughput (normalised to the 95th percentile globally) proxies infrastructure capacity. Congestion rate is from the disruption dataset.
+TEU throughput (UNCTAD, annual by country) proxies port infrastructure size and capacity to absorb demand shocks. Normalised to the 95th-percentile TEU in the dataset. Directly answers: *"Can the ports on this route handle volume without saturating?"*
 
 **Security (weight: 0.20)**
 
 ```
-Security = 0.50 × (1 − mean(conflict_rate)) + 0.50 × (1 − mean(geopolitical_risk_index))
+Security = 1 − mean(geopolitical_risk_index across path countries)
 ```
 
-`geo_conflict_rate` and `mean_gri` (Geopolitical Risk Index) are per-country values from the disruption dataset.
+GRI (Geopolitical Risk Index) from the disruption dataset captures conflict, political instability, and trade friction per country. Directly answers: *"How politically stable is the corridor?"*
 
 ### 7.3 Aggregation Rationale — Why Geometric Mean?
 

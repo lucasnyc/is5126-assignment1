@@ -136,7 +136,7 @@ with tabs[0]:
                 yaxis=dict(gridcolor="#21262d", autorange="reversed"),
                 height=500,
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
             # Feature values table
             with st.expander("Feature values for this edge"):
@@ -147,7 +147,7 @@ with tabs[0]:
                                    for f in top_feats],
                     "Importance": [f"{v:.2f}" for v in top_vals],
                 })
-                st.dataframe(feat_table.set_index("Feature"), use_container_width=True)
+                st.dataframe(feat_table.set_index("Feature"), width='stretch')
 
         except ValueError as e:
             st.warning(f"{e}")
@@ -186,7 +186,7 @@ with tabs[1]:
         yaxis=dict(gridcolor="#21262d", autorange="reversed"),
         height=550,
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
     with st.container(border=True):
         st.markdown("""
@@ -228,7 +228,7 @@ with tabs[2]:
             "XGBoost meaningfully outperforms the baseline",
         ],
     })
-    st.dataframe(metrics_df.set_index("Metric"), use_container_width=True)
+    st.dataframe(metrics_df.set_index("Metric"), width='stretch')
 
     st.info(
         "**Why is R\u00b2 relatively low?** The imputation task is inherently hard: "

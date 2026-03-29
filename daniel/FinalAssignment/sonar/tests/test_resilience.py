@@ -10,9 +10,7 @@ import networkx as nx
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from src.scoring.resilience import ResilienceScorer, sensitivity_analysis
-from src.graph.chokepoints import chokepoint_exposure
 from config import (
-    ALL_CHOKEPOINT_COUNTRIES,
     RS_WEIGHT_REL, RS_WEIGHT_FLEX, RS_WEIGHT_ENV,
     RS_WEIGHT_PORT, RS_WEIGHT_SEC,
 )
@@ -37,14 +35,10 @@ def simple_graph():
     for u, v, bl in [("A", "B", 0.25), ("B", "C", 0.20)]:
         G.add_edge(u, v, weight=2.0, bilateral_lsci=bl)
         for n in (u, v):
-            G.nodes[n].setdefault("fleet_pct", 0.5)
             G.nodes[n].setdefault("lsci", 50.0)
             G.nodes[n].setdefault("teu", 5e6)
             G.nodes[n].setdefault("weather_severity", 0.10)
             G.nodes[n].setdefault("otd_rate", 0.90)
-            G.nodes[n].setdefault("mean_delay_norm", 0.05)
-            G.nodes[n].setdefault("congestion_rate", 0.05)
-            G.nodes[n].setdefault("geo_conflict_rate", 0.02)
             G.nodes[n].setdefault("mean_gri", 0.40)
     return G
 
@@ -59,8 +53,7 @@ def test_weights_sum_to_one():
 # ── Score bounds ─────────────────────────────────────────────────────────────
 
 def test_score_in_bounds(scorer, simple_graph):
-    result = scorer.score(["A", "B", "C"], 4.0, simple_graph,
-                          path_k2=["A", "C"], cost_k2=5.0)
+    result = scorer.score(["A", "B", "C"], 4.0, simple_graph)
     assert 0.0 <= result["score"] <= 100.0, f"Score out of bounds: {result['score']}"
 
 
@@ -80,35 +73,26 @@ def test_score_has_all_component_labels(scorer, simple_graph):
     assert set(result["components_pct"].keys()) == expected_labels
 
 
-# ── Flex component tests ─────────────────────────────────────────────────────
+# ── Redundancy component tests ────────────────────────────────────────────────
 
-def test_no_alternative_gives_lower_flex(scorer, simple_graph):
-    """When no second route exists, flex is driven only by chk (alt=0)."""
-    result = scorer.score(["A", "B", "C"], 4.0, simple_graph,
-                          path_k2=None, cost_k2=None)
-    # flex should be < 1.0 since alt=0
-    assert result["flex"] < 1.0
-
-
-def test_identical_cost_k2_gives_max_alt(scorer, simple_graph):
-    """When k2 costs same as k1, alt premium=0 → alt sub-component = 1."""
-    result = scorer.score(["A", "B", "C"], 4.0, simple_graph,
-                          path_k2=["A", "D", "C"], cost_k2=4.0)
-    # flex = 0.6 * 1.0 (alt) + 0.4 * chk
-    assert result["flex"] >= 0.6  # at least the alt contribution
+def test_high_lsci_gives_high_flex(scorer):
+    """Countries with high LSCI (well-connected shipping) → high redundancy."""
+    G = nx.DiGraph()
+    G.add_edge("A", "B", weight=1.0)
+    for n in ("A", "B"):
+        G.nodes[n]["lsci"] = 90.0   # close to lsci_p95=100
+    flex = scorer._flex_component(["A", "B"], G)
+    assert flex >= 0.85, f"Expected high redundancy for high LSCI, got {flex}"
 
 
-# ── Chokepoint exposure tests ────────────────────────────────────────────────
-
-def test_chokepoint_exposure_zero_for_direct_route():
-    path = ["China", "Germany"]
-    assert chokepoint_exposure(path) == 0.0
-
-
-def test_chokepoint_exposure_increases_with_chokepoints():
-    path_clean = ["China", "India", "Germany"]
-    path_risky = ["China", "Egypt", "Germany"]
-    assert chokepoint_exposure(path_risky) > chokepoint_exposure(path_clean)
+def test_low_lsci_gives_low_flex(scorer):
+    """Countries with low LSCI → low redundancy."""
+    G = nx.DiGraph()
+    G.add_edge("A", "B", weight=1.0)
+    for n in ("A", "B"):
+        G.nodes[n]["lsci"] = 5.0    # very low connectivity
+    flex = scorer._flex_component(["A", "B"], G)
+    assert flex <= 0.10, f"Expected low redundancy for low LSCI, got {flex}"
 
 
 # ── Weather component tests ──────────────────────────────────────────────────
@@ -138,9 +122,8 @@ def test_high_otd_gives_high_rel(scorer):
     G.add_edge("A", "B", weight=1.0)
     for n in ("A", "B"):
         G.nodes[n]["otd_rate"] = 0.98
-        G.nodes[n]["mean_delay_norm"] = 0.01
     rel = scorer._rel_component(["A", "B"], G)
-    assert rel > 0.90, f"Expected high Rel for good OTD, got {rel}"
+    assert rel > 0.95, f"Expected high Rel for good OTD, got {rel}"
 
 
 def test_low_otd_gives_low_rel(scorer):
@@ -148,9 +131,8 @@ def test_low_otd_gives_low_rel(scorer):
     G.add_edge("A", "B", weight=1.0)
     for n in ("A", "B"):
         G.nodes[n]["otd_rate"] = 0.60
-        G.nodes[n]["mean_delay_norm"] = 0.50
     rel = scorer._rel_component(["A", "B"], G)
-    assert rel < 0.60, f"Expected low Rel for poor OTD, got {rel}"
+    assert rel < 0.65, f"Expected low Rel for poor OTD, got {rel}"
 
 
 # ── Security component tests ────────────────────────────────────────────────
@@ -159,10 +141,9 @@ def test_high_geo_risk_lowers_sec(scorer):
     G = nx.DiGraph()
     G.add_edge("A", "B", weight=1.0)
     for n in ("A", "B"):
-        G.nodes[n]["geo_conflict_rate"] = 0.30
         G.nodes[n]["mean_gri"] = 0.80
     sec = scorer._sec_component(["A", "B"], G)
-    assert sec < 0.50, f"Expected low Sec for high geo risk, got {sec}"
+    assert sec < 0.25, f"Expected low Sec for high GRI, got {sec}"
 
 
 # ── Port component tests ────────────────────────────────────────────────────
@@ -172,7 +153,6 @@ def test_large_port_gives_high_port(scorer):
     G.add_edge("A", "B", weight=1.0)
     for n in ("A", "B"):
         G.nodes[n]["teu"] = 8e6
-        G.nodes[n]["congestion_rate"] = 0.0
     port = scorer._port_component(["A", "B"], G)
     assert port > 0.70, f"Expected high Port for large port, got {port}"
 
@@ -180,8 +160,7 @@ def test_large_port_gives_high_port(scorer):
 # ── Sensitivity analysis tests ───────────────────────────────────────────────
 
 def test_sensitivity_returns_results(scorer, simple_graph):
-    result = sensitivity_analysis(scorer, ["A", "B", "C"], 4.0, simple_graph,
-                                  ["A", "D", "C"], 5.0)
+    result = sensitivity_analysis(scorer, ["A", "B", "C"], 4.0, simple_graph)
     assert "base_score" in result
     assert "perturbations" in result
     assert len(result["perturbations"]) == 5
@@ -190,7 +169,7 @@ def test_sensitivity_returns_results(scorer, simple_graph):
 def test_sensitivity_score_stable(scorer, simple_graph):
     """Score under ±10% weight perturbation should not vary more than 15 points."""
     result = sensitivity_analysis(scorer, ["A", "B", "C"], 4.0, simple_graph,
-                                  ["A", "D", "C"], 5.0, delta=0.10)
+                                  delta=0.10)
     base = result["base_score"]
     for comp, perturbs in result["perturbations"].items():
         for direction, perturbed_score in perturbs.items():

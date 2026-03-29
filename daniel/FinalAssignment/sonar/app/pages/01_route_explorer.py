@@ -445,12 +445,12 @@ def _render_wizard_question(step: int, answers: dict) -> None:
     st.write("")
     col_back, col_space, col_next = st.columns([1, 4, 1])
     with col_back:
-        if step > 0 and st.button("← Back", key=f"wiz_back_{step}", use_container_width=True):
+        if step > 0 and st.button("← Back", key=f"wiz_back_{step}", width='stretch'):
             st.session_state.wiz_step -= 1
             st.rerun()
     with col_next:
         btn_label = "Finish ✓" if step == N_QUESTIONS - 1 else "Next →"
-        if st.button(btn_label, key=f"wiz_next_{step}", type="primary", use_container_width=True):
+        if st.button(btn_label, key=f"wiz_next_{step}", type="primary", width='stretch'):
             # Persist answer
             if q["type"] == "deadline":
                 st.session_state.wiz_answers["deadline_option"] = val["option"]
@@ -550,10 +550,10 @@ def _render_route_details(crit_key: str, crit_label: str, r, rd: dict,
             "Value":  f"{fp:.1f}% vs {persona_result['margin']}% → "
                       + ("✓ Viable" if viable else "✗ Unviable"),
         })
-    st.dataframe(pd.DataFrame(rows).set_index("Metric"), use_container_width=True)
+    st.dataframe(pd.DataFrame(rows).set_index("Metric"), width='stretch')
     st.plotly_chart(
         make_resilience_gauge(r.rs, crit_label),
-        use_container_width=True,
+        width='stretch',
         config={"displayModeBar": False},
     )
     if hasattr(r, "rs_detail") and r.rs_detail:
@@ -562,7 +562,7 @@ def _render_route_details(crit_key: str, crit_label: str, r, rd: dict,
             st.dataframe(
                 pd.DataFrame([{"Component": k, "Contribution (pts)": f"{v:.1f}"}
                               for k, v in comp.items()]).set_index("Component"),
-                use_container_width=True,
+                width='stretch',
                 )
 
 
@@ -603,6 +603,47 @@ def _render_cost_of_certainty(routes: dict, base_key: str) -> None:
         else:
             verdict = f"Freight: **{cost_str}** · Lead time: **{lt_str}** · Resilience: **{rs_str}**"
 
+        # ── What's driving the RS difference? ────────────────────────────────
+        rs_drivers_html = ""
+        if abs(d_rs) > 0.5:
+            alt_comp  = getattr(alt,  "rs_detail", {}).get("components_pct", {})
+            base_comp = getattr(base, "rs_detail", {}).get("components_pct", {})
+            if alt_comp and base_comp:
+                comp_deltas = {k: alt_comp.get(k, 0) - base_comp.get(k, 0) for k in alt_comp}
+                top2 = sorted(comp_deltas.items(), key=lambda x: abs(x[1]), reverse=True)[:2]
+                parts = []
+                for factor, delta in top2:
+                    if abs(delta) > 0.3:
+                        dc = "#27AE60" if delta > 0 else "#E74C3C"
+                        sign = "+" if delta > 0 else ""
+                        parts.append(f'<span style="color:{dc}">{factor} {sign}{delta:.1f}</span>')
+                if parts:
+                    rs_drivers_html = (
+                        '<div style="font-size:11px;color:#8B949E;margin-top:10px;padding-top:8px;'
+                        'border-top:1px solid #21262d">'
+                        '<span style="color:#6e7681;font-weight:600">Resilience drivers: </span>'
+                        + " · ".join(parts) + "</div>"
+                    )
+
+        # ── Which countries differ between routes? ────────────────────────────
+        alt_only  = [c for c in alt.path  if c not in base.path]
+        base_only = [c for c in base.path if c not in alt.path]
+        if alt_only or base_only:
+            segments = []
+            if alt_only:
+                segments.append(f"Via {', '.join(alt_only[:3])}")
+            if base_only:
+                segments.append(f"Skips {', '.join(base_only[:3])}")
+            path_note = " · ".join(segments)
+        elif alt.hops != base.hops:
+            path_note = f"{alt.hops} hops vs {base.hops} hops — same countries, different stops"
+        else:
+            path_note = "Identical path — cost/time optimised differently"
+        path_html = (
+            '<div style="font-size:11px;color:#8B949E;margin-top:4px">'
+            f'<span style="color:#6e7681;font-weight:600">Route: </span>{path_note}</div>'
+        )
+
         with col:
             with st.container(border=True):
                 color = CRITERIA_COLORS[alt_key]
@@ -621,6 +662,8 @@ def _render_cost_of_certainty(routes: dict, base_key: str) -> None:
                     f'<div><div style="font-size:9px;color:#aaa;text-transform:uppercase;letter-spacing:.05em">Resilience Δ</div>'
                     f'<div style="font-size:1.1rem;font-weight:700;color:{rs_color}">{rs_str}</div></div>',
                     '</div>',
+                    path_html,
+                    rs_drivers_html,
                 ])
                 st.markdown(delta_html, unsafe_allow_html=True)
 
@@ -803,14 +846,14 @@ def _render_trend_analysis(edges_df: pd.DataFrame, origin: str, destination: str
         xanchor="right", yanchor="bottom",
     )
 
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, width='stretch', config={"displayModeBar": False})
 
     # YoY table
     yoy_rows = [
         {"Year": y, "Rate (%)": f"{r:.2f}%", "YoY Change": f"{c:+.1f}%" if c is not None else "—"}
         for y, r, c in zip(years, rates, yoy)
     ]
-    st.dataframe(pd.DataFrame(yoy_rows).set_index("Year"), use_container_width=True)
+    st.dataframe(pd.DataFrame(yoy_rows).set_index("Year"), width='stretch')
     st.caption(
         f"Rate volatility (std dev): **{std_dev:.2f} pp** — "
         + ("High volatility: factor into planning buffers." if std_dev > 3 else
@@ -1049,11 +1092,11 @@ if st.session_state.explorer_mode is None:
     ]), unsafe_allow_html=True)
     m1, m2 = st.columns(2)
     with m1:
-        if st.button("Get My Recommendation →", key="mode_guided", type="primary", use_container_width=True):
+        if st.button("Get My Recommendation →", key="mode_guided", type="primary", width='stretch'):
             st.session_state.explorer_mode = "guided"
             st.rerun()
     with m2:
-        if st.button("Show All Routes →", key="mode_expert", use_container_width=True):
+        if st.button("Show All Routes →", key="mode_expert", width='stretch'):
             st.session_state.explorer_mode = "expert"
             st.rerun()
     st.stop()
@@ -1065,7 +1108,7 @@ if st.session_state.explorer_mode is None:
 if st.session_state.explorer_mode == "expert":
     st.plotly_chart(
         make_route_radar({k: v for k, v in routes.items() if not k.startswith("_")}),
-        use_container_width=True,
+        width='stretch',
         config={"displayModeBar": False},
     )
 
@@ -1085,7 +1128,7 @@ if st.session_state.explorer_mode == "expert":
     # ── Globe — all three routes (below comparisons) ──────────────────────────
     st.markdown("---")
     section_header("🌐", "Route Map")
-    st.plotly_chart(globe_fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(globe_fig, width='stretch', config={"displayModeBar": False})
     if has_scenario:
         st.info(
             f"🚨 Scenario active: blocked=[{', '.join(blocked)}]  "
@@ -1137,7 +1180,7 @@ if st.session_state.explorer_mode == "expert":
             "RS Score":      round(r.rs, 1),
         })
     summary_df = pd.DataFrame(summary_rows).set_index("Criterion")
-    st.dataframe(summary_df, use_container_width=True)
+    st.dataframe(summary_df, width='stretch')
 
     _dl_col, _rpt_col = st.columns(2)
     with _dl_col:
@@ -1249,7 +1292,7 @@ else:
                 st.markdown(_chatbot_message(st.session_state.wiz_answers, persona_result, guided_routes))
             with edit_col:
                 st.write("")
-                if st.button("✏️ Edit", key="wiz_reset", use_container_width=True):
+                if st.button("✏️ Edit", key="wiz_reset", width='stretch'):
                     st.session_state.wiz_step      = 0
                     st.session_state.wiz_done      = False
                     st.session_state.turnstile_idx = 0
@@ -1261,7 +1304,7 @@ else:
         # ── Radar chart — between advisor and route boxes ──────────────────────
         st.plotly_chart(
             make_route_radar(guided_routes),
-            use_container_width=True,
+            width='stretch',
             config={"displayModeBar": False},
         )
 
@@ -1311,7 +1354,7 @@ else:
                     '<div style="font-size:13px;margin-bottom:4px;visibility:hidden">&nbsp;</div>',
                     unsafe_allow_html=True,
                 )
-            if st.button("◀", key="ts_prev", use_container_width=True, disabled=prev_disabled):
+            if st.button("◀", key="ts_prev", width='stretch', disabled=prev_disabled):
                 st.session_state.turnstile_idx -= 1
                 st.rerun()
 
@@ -1356,7 +1399,7 @@ else:
                     '<div style="font-size:13px;margin-bottom:4px;visibility:hidden">&nbsp;</div>',
                     unsafe_allow_html=True,
                 )
-            if st.button("▶", key="ts_next", use_container_width=True, disabled=next_disabled):
+            if st.button("▶", key="ts_next", width='stretch', disabled=next_disabled):
                 st.session_state.turnstile_idx += 1
                 st.rerun()
 
@@ -1370,7 +1413,7 @@ else:
                 criteria_routes={t_key: guided_criteria_dicts[t_key]},
                 blocked_chokepoints=blocked,
             )
-        st.plotly_chart(_guided_globe_cache[_gk], use_container_width=True, config={"displayModeBar": False})
+        st.plotly_chart(_guided_globe_cache[_gk], width='stretch', config={"displayModeBar": False})
         if has_scenario:
             st.info(
                 f"🚨 Scenario active: blocked=[{', '.join(blocked)}]  "
@@ -1426,7 +1469,7 @@ else:
                 )
             summary_rows.append(row)
         guided_df = pd.DataFrame(summary_rows).set_index("Criterion")
-        st.dataframe(guided_df, use_container_width=True)
+        st.dataframe(guided_df, width='stretch')
 
         _dl_col2, _rpt_col2 = st.columns(2)
         with _dl_col2:

@@ -491,60 +491,42 @@ def make_route_radar(routes: dict) -> go.Figure:
     """
     Build a radar (spider) chart comparing up to 3 routes across 5 dimensions.
 
-    Axes are chosen to guarantee visual differentiation between the three route
-    criteria (cheapest / fastest / most resilient):
-      1. Resilience Score   — composite RS (0–100), highest for most_resilient
-      2. Affordability      — relative inverted cost, highest for cheapest
-      3. Speed              — relative inverted lead time, highest for fastest
-      4. Chokepoint Safety  — 1 − chokepoint exposure (0–100)
-      5. Political Safety   — geopolitical risk component (0–100)
-
-    Axes 2 and 3 are normalised relative to the compared routes so differences
-    are always visible (scaled to [20, 100]).
+    Three axes — one per optimization criterion — each independent of the others:
+      1. Resilience  — composite RS (0–100)
+      2. Cost        — inverted relative cost; higher = cheaper (scaled to [20, 100])
+      3. Speed       — inverted relative lead time; higher = faster (scaled to [20, 100])
 
     Parameters
     ----------
     routes : dict[str, Route]
         Keys are criteria names (e.g. "most_resilient"), values are Route objects.
     """
-    categories = [
-        "Resilience Score",
-        "Affordability",
-        "Speed",
-        "Chokepoint Safety",
-        "Political Safety",
-    ]
+    categories = ["Resilience", "Cost", "Speed"]
 
     # Collect range data for relative normalisation of cost and lead time.
-    costs = [r.cost            for r in routes.values()]
-    lts   = [r.lead_time_days  for r in routes.values()]
+    costs = [r.cost           for r in routes.values()]
+    lts   = [r.lead_time_days for r in routes.values()]
     cost_lo, cost_hi = min(costs), max(costs)
     lt_lo,   lt_hi   = min(lts),   max(lts)
 
     def _norm_inv(val, lo, hi):
         """Lower raw value → higher score. Maps to [20, 100]."""
         if hi - lo < 1e-9:
-            return 60.0          # all routes equal on this dimension
+            return 60.0
         return 20.0 + (1.0 - (val - lo) / (hi - lo)) * 80.0
 
     fig = go.Figure()
 
     for crit_key, r in routes.items():
-        label  = CRITERIA_LABELS.get(crit_key, crit_key)
-        color  = CRITERIA_COLORS.get(crit_key, "#ccc")
-        detail = getattr(r, "rs_detail", {})
+        label = CRITERIA_LABELS.get(crit_key, crit_key)
+        color = CRITERIA_COLORS.get(crit_key, "#ccc")
 
         values = [
-            float(r.rs),                                       # Resilience Score
-            _norm_inv(r.cost,           cost_lo, cost_hi),    # Affordability
-            _norm_inv(r.lead_time_days, lt_lo,   lt_hi),      # Speed
-            (1.0 - float(r.chk_exposure)) * 100.0,            # Chokepoint Safety
-            detail.get("sec", 0.5) * 100.0,                   # Political Safety
+            float(r.rs),                                    # Resilience (0–100)
+            _norm_inv(r.cost,           cost_lo, cost_hi), # Cost (higher = cheaper)
+            _norm_inv(r.lead_time_days, lt_lo,   lt_hi),   # Speed (higher = faster)
         ]
 
-        # Do NOT manually close the polygon — fill="toself" closes the fill
-        # automatically, and avoiding the repeated first point prevents a
-        # spurious coloured line overlaid on the first axis spoke.
         fig.add_trace(go.Scatterpolar(
             r=values,
             theta=categories,

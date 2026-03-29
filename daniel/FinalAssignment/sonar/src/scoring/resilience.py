@@ -9,12 +9,13 @@ Geometric mean aggregation (equal weights, 0.20 each). Non-compensatory:
 if any single dimension approaches 0, the total score collapses to 0 regardless
 of how well the other dimensions score.
 
-Components:
-    Reliability  (rel)  — historical on-time rate & delay severity
-    Redundancy   (flex) — route redundancy & chokepoint avoidance
-    Weather      (env)  — environmental stability along route
-    Ports        (port) — port infrastructure capacity & congestion
-    Security     (sec)  — geopolitical risk & conflict exposure
+Each factor uses a single input — no internal sub-weights:
+
+    Reliability  = mean(on-time delivery rate across path countries)
+    Redundancy   = mean(LSCI / LSCI_p95 across path countries)
+    Weather      = 1 − mean(weather severity across path countries)
+    Ports        = mean(TEU / TEU_p95 across path countries)
+    Security     = 1 − mean(Geopolitical Risk Index across path countries)
 
 See config.py for references.
 """
@@ -32,16 +33,14 @@ from config import (
     RS_WEIGHT_PORT, RS_WEIGHT_SEC,
     CONSTANTS_PATH,
 )
-from src.graph.routing import maritime_chokepoint_exposure
-
-
 def _load_constants() -> dict:
     if not os.path.exists(CONSTANTS_PATH):
         return {
-            "teu_p95":                1e7,
+            "teu_p95":                 1e7,
+            "lsci_p95":                100.0,
             "weather_severity_median": 0.10,
-            "rel_median":             0.87,
-            "sec_median_gri":         0.50,
+            "rel_median":              0.87,
+            "sec_median_gri":          0.50,
         }
     with open(CONSTANTS_PATH, "rb") as f:
         return pickle.load(f)
@@ -59,61 +58,45 @@ class ResilienceScorer:
     def __init__(self, constants: dict | None = None):
         if constants is None:
             constants = _load_constants()
-        self.teu_p95                = max(constants.get("teu_p95", 1e7), 1e-6)
+        self.teu_p95                = max(constants.get("teu_p95",  1e7),   1e-6)
+        self.lsci_p95               = max(constants.get("lsci_p95", 100.0), 1e-6)
         self.weather_severity_median = constants.get("weather_severity_median", 0.10)
-        self.rel_median             = constants.get("rel_median", 0.87)
+        self.rel_median             = constants.get("rel_median",    0.87)
         self.sec_median_gri         = constants.get("sec_median_gri", 0.50)
 
     # ── Component calculators ─────────────────────────────────────────────────
 
     def _rel_component(self, path: list[str], G: nx.DiGraph) -> float:
         """
-        Rel ∈ [0, 1] — Delivery Confidence.
-        Combines on-time delivery rate (60%) and delay severity (40%).
-        Countries not in the disruption dataset use the dataset median OTD.
+        Reliability ∈ [0, 1] — mean on-time delivery rate across path countries.
+        Countries not in the disruption dataset use the dataset median OTD rate.
         """
         if not path:
-            return 0.5
-        # delay_median is derived so the combined formula matches rel_median at default:
-        # 0.60 * rel_median + 0.40 * (1 - delay_median) = rel_median
-        # → delay_median = 1 - rel_median / 0.40 * (1 - 0.60) = (1 - rel_median) / 0.40 * 0.40
-        # Simplified: delay_median = 1.0 - rel_median  (the complement of the OTD gap)
-        _delay_median = round(1.0 - self.rel_median, 4)  # ≈ 0.13 when rel_median=0.87
-        otd_vals = []
-        delay_vals = []
+            return self.rel_median
+        vals = []
         for n in path:
             nd = G.nodes.get(n, {})
             otd = nd.get("otd_rate")
-            delay = nd.get("mean_delay_norm")
-            otd_vals.append(otd if otd is not None else self.rel_median)
-            delay_vals.append(delay if delay is not None else _delay_median)
-        otd_score = float(np.mean(otd_vals))
-        delay_score = float(1.0 - np.mean(delay_vals))
-        return float(np.clip(0.60 * otd_score + 0.40 * delay_score, 0.0, 1.0))
+            vals.append(otd if otd is not None else self.rel_median)
+        return float(np.clip(np.mean(vals), 0.0, 1.0))
 
-    def _flex_component(
-        self, cost_k1: float, cost_k2: float | None, path: list[str]
-    ) -> float:
+    def _flex_component(self, path: list[str], G: nx.DiGraph) -> float:
         """
-        Flex ∈ [0, 1] — Backup Options.
-        Combines route redundancy (60%) and chokepoint avoidance (40%).
+        Redundancy ∈ [0, 1] — mean normalised LSCI across path countries.
 
-        Route redundancy: cost premium of 2nd-best route vs best.
-        premium = 0%   → alt = 1.0 (perfect substitutes)
-        premium ≥ 100% → alt = 0.0 (no viable alternative)
-        No k2 route    → alt = 0.0
+        LSCI (Liner Shipping Connectivity Index, UNCTAD) measures how many
+        shipping services, companies, and vessel sizes serve each country.
+        Higher LSCI = more real alternatives exist if the primary route fails.
+        Normalised to the 95th-percentile LSCI observed in the dataset.
         """
-        # Alt sub-component
-        if cost_k2 is None or cost_k2 <= 0:
-            alt = 0.0
-        else:
-            premium = (cost_k2 - cost_k1) / (cost_k1 + 1e-9)
-            alt = float(max(0.0, 1.0 - premium))
-
-        # Chk sub-component — maritime detour ratio if all chokepoints blocked
-        chk = float(1.0 - maritime_chokepoint_exposure(path))
-
-        return float(np.clip(0.60 * alt + 0.40 * chk, 0.0, 1.0))
+        if not path:
+            return 0.5
+        vals = []
+        for n in path:
+            nd = G.nodes.get(n, {})
+            lsci = float(nd.get("lsci", 0.0) or 0.0)
+            vals.append(min(lsci / self.lsci_p95, 1.0))
+        return float(np.clip(np.mean(vals), 0.0, 1.0))
 
     def _env_component(self, path: list[str], G: nx.DiGraph) -> float:
         """
@@ -132,43 +115,33 @@ class ResilienceScorer:
 
     def _port_component(self, path: list[str], G: nx.DiGraph) -> float:
         """
-        Port ∈ [0, 1] — Port Health.
-        Combines TEU capacity (60%, proxy for infrastructure) and
-        congestion avoidance (40%, from disruption data).
+        Ports ∈ [0, 1] — mean normalised TEU capacity across path countries.
+        TEU throughput (UNCTAD) proxies port infrastructure size.
+        Normalised to the 95th-percentile TEU observed in the dataset.
         """
         if not path:
             return 0.5
-        teu_vals = []
-        cong_vals = []
+        vals = []
         for n in path:
             nd = G.nodes.get(n, {})
             teu = float(nd.get("teu", 0.0) or 0.0)
-            teu_vals.append(min(teu / self.teu_p95, 1.0))
-            cong = nd.get("congestion_rate")
-            cong_vals.append(cong if cong is not None else 0.0)
-        teu_score = float(np.mean(teu_vals))
-        cong_score = float(1.0 - np.mean(cong_vals))
-        return float(np.clip(0.60 * teu_score + 0.40 * cong_score, 0.0, 1.0))
+            vals.append(min(teu / self.teu_p95, 1.0))
+        return float(np.clip(np.mean(vals), 0.0, 1.0))
 
     def _sec_component(self, path: list[str], G: nx.DiGraph) -> float:
         """
-        Sec ∈ [0, 1] — Security Level.
-        Combines geopolitical conflict rate (50%) and mean geopolitical
-        risk index (50%).  Higher = safer route.
+        Security ∈ [0, 1] — 1 − mean Geopolitical Risk Index across path countries.
+        GRI (from the disruption dataset) captures conflict, political instability,
+        and trade friction. Higher = safer route.
         """
         if not path:
-            return 0.5
-        conflict_vals = []
-        gri_vals = []
+            return 1.0 - self.sec_median_gri
+        vals = []
         for n in path:
             nd = G.nodes.get(n, {})
-            conflict = nd.get("geo_conflict_rate")
             gri = nd.get("mean_gri")
-            conflict_vals.append(conflict if conflict is not None else 0.0)
-            gri_vals.append(gri if gri is not None else self.sec_median_gri)
-        conflict_score = float(1.0 - np.mean(conflict_vals))
-        gri_score = float(1.0 - np.mean(gri_vals))
-        return float(np.clip(0.50 * conflict_score + 0.50 * gri_score, 0.0, 1.0))
+            vals.append(gri if gri is not None else self.sec_median_gri)
+        return float(np.clip(1.0 - np.mean(vals), 0.0, 1.0))
 
     # ── Main scorer ───────────────────────────────────────────────────────────
 
@@ -189,7 +162,7 @@ class ResilienceScorer:
                         label, components_pct
         """
         rel  = self._rel_component(path_k1, G)
-        flex = self._flex_component(cost_k1, cost_k2, path_k1)
+        flex = self._flex_component(path_k1, G)
         env  = self._env_component(path_k1, G)
         port = self._port_component(path_k1, G)
         sec  = self._sec_component(path_k1, G)
@@ -276,7 +249,7 @@ def sensitivity_analysis(scorer: ResilienceScorer,
 
     # Compute raw component values
     rel  = scorer._rel_component(path_k1, G)
-    flex = scorer._flex_component(cost_k1, cost_k2, path_k1)
+    flex = scorer._flex_component(path_k1, G)
     env  = scorer._env_component(path_k1, G)
     port = scorer._port_component(path_k1, G)
     sec  = scorer._sec_component(path_k1, G)

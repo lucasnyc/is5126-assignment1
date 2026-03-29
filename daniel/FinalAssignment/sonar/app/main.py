@@ -378,7 +378,7 @@ _tile_cols = st.columns(5)
 for _col, (_page, _color, _icon, _title, _desc) in zip(_tile_cols, _nav_tiles):
     with _col:
         _label = f"{_icon}\n\n**{_title}**\n\n{_desc}"
-        if st.button(_label, key=f"nav_{_title}", use_container_width=True):
+        if st.button(_label, key=f"nav_{_title}", width='stretch'):
             st.switch_page(_page)
 
 # ── How It Works ──────────────────────────────────────────────────────────────

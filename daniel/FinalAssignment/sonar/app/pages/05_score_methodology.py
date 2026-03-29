@@ -94,7 +94,7 @@ fig_weights.update_layout(
     margin=dict(t=20, b=10),
     showlegend=False,
 )
-st.plotly_chart(fig_weights, use_container_width=True)
+st.plotly_chart(fig_weights, width='stretch')
 
 # ── 2. Factor cards ───────────────────────────────────────────────────────────
 section_header("🔍", "Factor Breakdown", "What each component measures and why it matters")
@@ -106,13 +106,13 @@ _factor_details = [
         "weight": RS_WEIGHT_REL,
         "color":  "#4A90D9",
         "icon":   "📦",
-        "formula": "0.60 × OTD Rate  +  0.40 × (1 − Mean Delay / 10 days)",
+        "formula": "mean(on-time delivery rate across path countries)",
         "source":  "global_supply_chain_disruption_v1.csv — 10K shipments, 6 trade lanes",
         "why": (
             "On-time delivery rate is the gold standard of carrier performance, "
-            "typically benchmarked at ≥95% (PDF §4). High delay variability makes it "
-            "impossible to give accurate ETAs, damaging customer trust. "
-            "Together these measure both the frequency and severity of lateness."
+            "typically benchmarked at ≥95% (PDF §4). A single late-arriving shipment "
+            "can cascade into production stoppages or stockouts downstream. "
+            "Countries not in the dataset use the global median OTD rate."
         ),
         "interpretation": "Countries with Suez-route exposure (India, UK) score lower due to geopolitical-conflict delays (83–85% OTD). Atlantic and commodity routes score highest (89–91% OTD).",
     },
@@ -122,15 +122,16 @@ _factor_details = [
         "weight": RS_WEIGHT_FLEX,
         "color":  "#27AE60",
         "icon":   "🔀",
-        "formula": "0.60 × (1 − k2 cost premium)  +  0.40 × (1 − chokepoint exposure)",
-        "source":  "Graph-derived at query time — Yen's K-shortest paths",
+        "formula": "mean(LSCI / LSCI_p95 across path countries)",
+        "source":  "UNCTAD Liner Shipping Connectivity Index — published annually per country",
         "why": (
-            "Routes that pass through a single chokepoint cannot recover from disruption "
-            "(PDF §3). A route with no viable alternative is catastrophically fragile — "
-            "the 2021 Ever Given blockage halted $9B/day in trade with zero alternatives. "
-            "The cost premium of the 2nd-best route quantifies how 'trapped' a shipper is."
+            "LSCI measures how many shipping services, companies, and vessel sizes operate "
+            "in each country (PDF §3). A high-LSCI country has many carriers calling — "
+            "if one cancels, alternatives exist. A low-LSCI country has few services, "
+            "making it a bottleneck with no fallback options. "
+            "Normalised to the 95th-percentile LSCI in the dataset."
         ),
-        "interpretation": "Isolated island routes (Japan, Australia) score low on Flex due to few alternative hub connections. Major hub-to-hub corridors (China–US, China–Germany) score high.",
+        "interpretation": "China, Singapore, and South Korea score near 1.0 (dozens of global carriers). Island and landlocked nations score near 0 — any disruption leaves shippers stranded.",
     },
     {
         "key":    "Weather",
@@ -138,7 +139,7 @@ _factor_details = [
         "weight": RS_WEIGHT_ENV,
         "color":  "#F39C12",
         "icon":   "🌦",
-        "formula": "1 − mean(weather severity) over all countries in path",
+        "formula": "1 − mean(weather severity across path countries)",
         "source":  "country_date_conditions.csv — 129K observations, 211 countries, 669 dates",
         "why": (
             "Meteorological conditions are the most persistent external factor in maritime "
@@ -155,16 +156,16 @@ _factor_details = [
         "weight": RS_WEIGHT_PORT,
         "color":  "#9B59B6",
         "icon":   "🏗",
-        "formula": "0.60 × (TEU / 95th-pct TEU)  +  0.40 × (1 − port congestion rate)",
-        "source":  "UNCTAD container_port_throughput.csv + disruption dataset congestion rates",
+        "formula": "mean(TEU / TEU_p95 across path countries)",
+        "source":  "UNCTAD container_port_throughput.csv — annual TEU by country",
         "why": (
-            "Seaports are primary failure nodes — congestion cascades into the entire "
-            "land-side network (PDF §2). TEU throughput proxies for infrastructure "
-            "capacity and crane efficiency; high-throughput ports absorb demand shocks. "
-            "When yard density exceeds 80%, terminal efficiency collapses in a 'vicious cycle' "
-            "of congestion (PDF §2)."
+            "TEU throughput proxies port infrastructure size and capacity to absorb "
+            "demand shocks (PDF §2). Large-throughput ports have more berths, cranes, "
+            "and yard space — they recover faster from disruptions and rarely become "
+            "the binding constraint on a route. "
+            "Normalised to the 95th-percentile TEU in the dataset."
         ),
-        "interpretation": "China, South Korea, and the US score high (massive TEU throughput). Brazil and the Netherlands score lower due to observed port congestion in the disruption dataset.",
+        "interpretation": "China, South Korea, and the US score high (massive TEU throughput). Smaller nations score lower — their ports saturate quickly under demand spikes.",
     },
     {
         "key":    "Security",
@@ -172,15 +173,16 @@ _factor_details = [
         "weight": RS_WEIGHT_SEC,
         "color":  "#E74C3C",
         "icon":   "🔐",
-        "formula": "0.50 × (1 − geo conflict rate)  +  0.50 × (1 − Geopolitical Risk Index)",
-        "source":  "global_supply_chain_disruption_v1.csv — Geopolitical_Risk_Index + conflict events",
+        "formula": "1 − mean(Geopolitical Risk Index across path countries)",
+        "source":  "global_supply_chain_disruption_v1.csv — Geopolitical_Risk_Index per country",
         "why": (
-            "Geopolitical risks including conflict, piracy, and terrorism can make routes "
-            "financially unviable — insurers spike premiums 300–500% in high-tension areas "
-            "like the Red Sea or Strait of Hormuz (PDF §5). A 1% increase in geopolitical "
-            "distance between nations leads to a 10% decrease in trade efficiency."
+            "The GRI captures conflict, political instability, and trade friction. "
+            "Geopolitical risks can make routes financially unviable — insurers spike "
+            "premiums 300–500% in high-tension areas like the Red Sea or Strait of Hormuz "
+            "(PDF §5). A 1% increase in geopolitical distance leads to a 10% decrease in "
+            "trade efficiency."
         ),
-        "interpretation": "Routes transiting the Suez Canal (India–UK, Shenzhen–Rotterdam) show the highest geopolitical conflict rates (14–16%). Intra-Pacific routes are significantly safer.",
+        "interpretation": "Routes transiting the Suez Canal (India–UK, Shenzhen–Rotterdam) show the highest GRI exposure. Intra-Pacific routes through stable economies are significantly safer.",
     },
 ]
 
@@ -350,19 +352,19 @@ if gkey in graphs:
                         x0=i - 0.4, x1=i + 0.4, y0=max_w, y1=max_w,
                         line=dict(color="rgba(255,255,255,0.2)", dash="dot", width=1.5),
                     )
-                st.plotly_chart(fig_comp, use_container_width=True)
+                st.plotly_chart(fig_comp, width='stretch')
                 st.caption("Dashed lines show the maximum possible contribution for each factor.")
 
             # Per-factor breakdown table
             raw_vals = {
-                "Delivery Confidence": (rs["rel"],  f"OTD: {rs['rel']:.0%}", "#4A90D9"),
-                "Backup Options":      (rs["flex"], f"Alt+Chk combined", "#27AE60"),
-                "Weather Safety":      (rs["env"],  f"1 − avg severity", "#F39C12"),
-                "Port Health":         (rs["port"], f"TEU + congestion", "#9B59B6"),
-                "Security Level":      (rs["sec"],  f"1 − conflict/GRI", "#E74C3C"),
+                "Reliability": (rs["rel"],  f"OTD: {rs['rel']:.0%}", "#4A90D9"),
+                "Redundancy":  (rs["flex"], f"Alt+Chk combined", "#27AE60"),
+                "Weather":     (rs["env"],  f"1 − avg severity", "#F39C12"),
+                "Ports":       (rs["port"], f"TEU + congestion", "#9B59B6"),
+                "Security":    (rs["sec"],  f"1 − conflict/GRI", "#E74C3C"),
             }
             weights_map = dict(zip(
-                ["Delivery Confidence", "Backup Options", "Weather Safety", "Port Health", "Security Level"],
+                ["Reliability", "Redundancy", "Weather", "Ports", "Security"],
                 _weights
             ))
 
@@ -375,7 +377,7 @@ if gkey in graphs:
                     "Contribution": f"{raw * weights_map[name] * 100:.1f} pts",
                     "Status":      "✅ Good" if raw >= 0.80 else "⚠️ Fair" if raw >= 0.60 else "🔴 Weak",
                 })
-            st.dataframe(pd.DataFrame(rows_detail).set_index("Factor"), use_container_width=True)
+            st.dataframe(pd.DataFrame(rows_detail).set_index("Factor"), width='stretch')
 
             # ── Sensitivity analysis ──────────────────────────────────────────────
             with st.expander("Sensitivity Analysis — how stable is this score?"):
@@ -386,17 +388,21 @@ if gkey in graphs:
                     cost_k2=routes[1].cost if len(routes) >= 2 else None,
                     delta=0.10,
                 )
+                _sa_labels = {
+                    "rel": "Reliability", "flex": "Redundancy",
+                    "env": "Weather", "port": "Ports", "sec": "Security",
+                }
                 sa_rows = []
                 for comp_key, perturbs in sa["perturbations"].items():
                     plus_score  = perturbs.get("plus", score_val)
                     minus_score = perturbs.get("minus", score_val)
                     sa_rows.append({
-                        "Factor":     comp_key.upper(),
+                        "Factor":     _sa_labels.get(comp_key, comp_key),
                         "+10% weight": f"{plus_score:.1f}",
                         "−10% weight": f"{minus_score:.1f}",
                         "Δ range":    f"±{(abs(plus_score - score_val) + abs(minus_score - score_val)) / 2:.1f}",
                     })
-                st.dataframe(pd.DataFrame(sa_rows).set_index("Factor"), use_container_width=True)
+                st.dataframe(pd.DataFrame(sa_rows).set_index("Factor"), width='stretch')
                 st.caption(
                     f"Base score: **{score_val:.1f}**. Perturbing each weight ±10% while "
                     "rescaling the others to maintain a sum of 1.0."

@@ -407,7 +407,7 @@ fig_bar.update_layout(
     legend=dict(bgcolor="#161b22", bordercolor="#21262d", borderwidth=1),
     height=400, margin=dict(t=20),
 )
-st.plotly_chart(fig_bar, use_container_width=True, config={"displayModeBar": False})
+st.plotly_chart(fig_bar, width='stretch', config={"displayModeBar": False})
 
 # ─── Resilience radar ─────────────────────────────────────────────────────────
 st.markdown("---")
@@ -439,7 +439,7 @@ for i, (_, row) in enumerate(df_sorted.iterrows()):
     radar_routes[key] = _StrategyRoute(row, color)
 
 fig_radar = make_route_radar(radar_routes)
-st.plotly_chart(fig_radar, use_container_width=True, config={"displayModeBar": False})
+st.plotly_chart(fig_radar, width='stretch', config={"displayModeBar": False})
 
 # Restore original dicts
 _globe.CRITERIA_LABELS = _saved_labels
@@ -468,7 +468,7 @@ for num_col in ["RS Score", "Freight Rate (%)", "Lead Time (d)",
     if num_col in _out.columns:
         _out[num_col] = pd.to_numeric(_out[num_col], errors="coerce").round(1)
 _out = _out.set_index("Strategy")
-st.dataframe(_out, use_container_width=True)
+st.dataframe(_out, width='stretch')
 
 st.download_button(
     "Download Strategy Comparison as CSV",
@@ -518,7 +518,7 @@ if not _trend.empty:
         yaxis=dict(title="Freight Rate (% of cargo value)", gridcolor="#21262d"),
         height=280, margin=dict(t=10),
     )
-    st.plotly_chart(fig_trend, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig_trend, width='stretch', config={"displayModeBar": False})
 else:
     st.info("No historical rate data available for this corridor.")
 
