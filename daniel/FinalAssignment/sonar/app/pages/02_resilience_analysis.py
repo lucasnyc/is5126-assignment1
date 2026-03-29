@@ -384,11 +384,11 @@ if gkey in graphs:
         )
 
         _comp_colors = {
-            "Delivery Confidence": "#4A90D9",
-            "Backup Options":      "#27AE60",
-            "Weather Safety":      "#F39C12",
-            "Port Health":         "#9B59B6",
-            "Security Level":      "#E74C3C",
+            "Reliability": "#4A90D9",
+            "Redundancy":  "#27AE60",
+            "Weather":     "#F39C12",
+            "Ports":       "#9B59B6",
+            "Security":    "#E74C3C",
         }
         fig_bar = go.Figure(go.Bar(
             x=list(comp.keys()),
@@ -400,11 +400,11 @@ if gkey in graphs:
         ))
         fig_bar.update_layout(
             title=f"RS Components: {chosen_corridor} ({chosen_product})",
-            yaxis_title="Contribution (pts, max=37/21/21/11/10)",
+            yaxis_title="Component Score (0–100 each)",
             paper_bgcolor=COLORS["paper"],
             plot_bgcolor=COLORS["paper"],
             font=dict(color="white"),
-            yaxis=dict(range=[0, 42], gridcolor="#21262d"),
+            yaxis=dict(range=[0, 105], gridcolor="#21262d"),
             xaxis=dict(gridcolor="#21262d"),
             height=350,
         )

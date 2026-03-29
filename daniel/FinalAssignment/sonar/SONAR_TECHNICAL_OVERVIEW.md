@@ -34,7 +34,7 @@ XGBoost Imputation   (fills in unobserved freight rates)
       ↓
 Graph Construction   (5 directed weighted graphs: 2021 × 5 products)
       ↓
-Routing + Scoring    (Yen's K-shortest + AHP Resilience Score)
+Routing + Scoring    (Yen's K-shortest + 5-factor Resilience Score)
       ↓
 Streamlit Dashboard  (3-page interactive app)
 ```
@@ -119,10 +119,15 @@ All joins are `LEFT` to preserve every observation row even when supporting data
 
 ### 3.4 Normalization Constants
 
-Three constants computed from the training data are saved to `normalization_constants.pkl` and used later by the Resilience Scorer:
-- `bilateral_lsci_p95` — 95th percentile of observed bilateral LSCI (used to normalize the Bil component)
-- `median_fleet_pct` — median fleet supply (used to normalize the Fleet component)
-- `median_lsci` — median country LSCI (used as fallback for lead-time estimation)
+Several constants computed from the training data are saved to `normalization_constants.pkl` and used later by the Resilience Scorer and routing engine:
+
+| Constant | Used by | Purpose |
+|---|---|---|
+| `teu_p95` | Ports component | 95th percentile TEU throughput — normalises port capacity to [0, 1] |
+| `weather_severity_median` | Weather component | Median weather severity — fallback for countries with no weather data |
+| `rel_median` | Reliability component | Median on-time delivery rate — fallback for countries absent from disruption dataset |
+| `sec_median_gri` | Security component | Median Geopolitical Risk Index — fallback for countries without GRI data |
+| `median_lsci` | Routing engine | Median country LSCI — fallback for lead-time estimation |
 
 ---
 
@@ -328,83 +333,100 @@ The three winners are displayed side-by-side on the globe, coloured green (resil
 ### 7.1 Formula
 
 ```
-RS = 100 × (0.47 × Alt + 0.28 × Chk + 0.17 × Bil + 0.07 × Fleet)
+RS = 100 × (Reliability × Redundancy × Weather × Ports × Security)^0.20
 ```
 
-Each component is normalised to [0, 1] before weighting. The final score is clipped to [0, 100].
+Each component is normalised to [0, 1]. With equal exponents (0.20 each), the formula reduces to the **5th root of the product** of all five components. The result maps directly to [0, 100] — no floor adjustment is applied.
 
 ### 7.2 Component Definitions
 
-**Alt — Route Redundancy (weight: 0.47)**
+**Reliability (weight: 0.20)**
 
-Measures how viable the second-best route is relative to the cheapest:
-
-```
-premium = (cost_k2 - cost_k1) / cost_k1
-
-Alt = max(0, 1 - premium)      (capped: premium ≥ 100% → Alt = 0)
-```
-
-- `premium = 0%` → Alt = 1.0 (perfect substitutes — corridor has strong redundancy)
-- `premium = 50%` → Alt = 0.5 (moderate redundancy)
-- `premium ≥ 100%` → Alt = 0.0 (no viable alternative at comparable cost)
-- No second route exists → Alt = 0.0 (single point of failure)
-
-**Chk — Chokepoint Avoidance (weight: 0.28)**
+Measures how consistently cargo arrives on time:
 
 ```
-Chk = 1 - chokepoint_exposure(path)
-
-chokepoint_exposure = |intermediate nodes ∩ chokepoint countries| / |all chokepoint countries|
+Reliability = 0.60 × mean(on_time_delivery_rate) + 0.40 × (1 − mean(normalised_delay))
 ```
 
-Chokepoint countries: Egypt, Panama, Iran, Oman, Singapore, Malaysia, Indonesia (7 total). A route transiting none of these scores Chk = 1.0; a route through Singapore scores lower.
+`on_time_delivery_rate` and `normalised_delay` are per-country values from the disruption dataset. Countries not in the dataset use the dataset median.
 
-**Bil — Bilateral Connectivity (weight: 0.17)**
+**Redundancy (weight: 0.20)**
 
-```
-Bil = min(1.0, mean(bilateral_lsci along edges) / bilateral_lsci_p95)
-```
-
-Average bilateral LSCI across all route edges, normalised by the 95th-percentile value from training data. Captures service frequency and vessel capacity on the specific corridor.
-
-**Fleet — Fleet Availability (weight: 0.07)**
+Measures how viable the backup route is and how many chokepoints the path avoids:
 
 ```
-Fleet = min(1.0, mean(fleet_pct along path nodes) / median_fleet_pct)
+cost_premium      = (cost_2nd_best − cost_best) / cost_best
+route_redundancy  = max(0, 1 − cost_premium)     (no alternative route → 0)
+chokepoint_safety = 1 − chokepoint_exposure(path)
+
+Redundancy = 0.60 × route_redundancy + 0.40 × chokepoint_safety
 ```
 
-Average merchant fleet ownership share across all countries on the route, normalised by the training-data median. Fleet is the least influential factor — vessels can be globally re-chartered within weeks.
+`chokepoint_exposure` = fraction of intermediate nodes that are strategic chokepoint countries.
 
-### 7.3 Weight Derivation via AHP
-
-Weights were derived using the **Analytic Hierarchy Process (Saaty, 1980)**, a structured method for multi-criteria decision making. Each pair of criteria is compared using a 1–9 scale of relative importance:
+**Weather (weight: 0.20)**
 
 ```
-Pairwise comparison matrix:
-
-         Alt   Chk   Bil   Fleet
-  Alt  [  1     2     3     5  ]
-  Chk  [ 1/2    1     2     4  ]
-  Bil  [ 1/3   1/2    1     3  ]
-  Fleet[ 1/5   1/4   1/3    1  ]
+Weather = 1 − mean(weather_severity across path countries)
 ```
 
-**Rationale for ordering:**
-- **Alt > Chk**: Route redundancy is the primary resilience driver. A corridor with no alternatives cannot recover from any single disruption, regardless of how many chokepoints it avoids (UNCTAD Maritime Review, 2021).
-- **Chk > Bil**: 40% of global container trade transits the Strait of Malacca; Suez handles ~15%. Chokepoint concentration is a systemic risk. Bilateral LSCI is a service-quality measure, not an existential risk.
-- **Bil > Fleet**: LSCI captures scheduled liner service frequency, which is harder to substitute quickly. Fleet ownership is most fungible — tonnage can be re-chartered globally.
+Weather severity is mapped from 48 meteorological condition strings to a [0, 1] scale per IMO/WMO hazard classifications.
 
-The priority vector (weights) is computed from the normalised column means. **Consistency Ratio CR = 0.019 < 0.10**, confirming the judgements are internally consistent (Saaty's threshold is 0.10).
+**Ports (weight: 0.20)**
 
-### 7.4 Score Interpretation
+```
+Ports = 0.60 × mean(port_throughput / max_throughput_p95) + 0.40 × (1 − mean(congestion_rate))
+```
+
+Port throughput (normalised to the 95th percentile globally) proxies infrastructure capacity. Congestion rate is from the disruption dataset.
+
+**Security (weight: 0.20)**
+
+```
+Security = 0.50 × (1 − mean(conflict_rate)) + 0.50 × (1 − mean(geopolitical_risk_index))
+```
+
+`geo_conflict_rate` and `mean_gri` (Geopolitical Risk Index) are per-country values from the disruption dataset.
+
+### 7.3 Aggregation Rationale — Why Geometric Mean?
+
+The additive (arithmetic) model is **compensatory**: a perfect score in Ports and Weather can offset a near-zero score in Security, producing a "Moderate Resilience" result for a route through an active warzone. That misrepresents how supply chains actually fail.
+
+The geometric mean is **non-compensatory**: each component enters as an exponent, so any dimension approaching 0 drives the total score toward 0 regardless of the other four. This accurately models systemic supply chain risk — a catastrophic failure in one node breaks the entire chain.
+
+**Numerical illustration:**
+
+| Scenario | Reliability | Redundancy | Weather | Ports | Security | Additive RS | Geometric RS |
+|---|---|---|---|---|---|---|---|
+| All strong | 0.90 | 0.88 | 0.85 | 0.92 | 0.87 | 88.4 | 88.4 |
+| One critical failure | 0.90 | 0.88 | 0.85 | 0.92 | **0.05** | 72.0 | **42.1** |
+| Two weak dimensions | 0.90 | **0.30** | 0.85 | 0.92 | **0.30** | 65.4 | **52.8** |
+
+The geometric mean collapses appropriately when any dimension is critically low; the arithmetic mean masks it as "moderate".
+
+### 7.4 Score Scale
+
+The geometric mean maps naturally to [0, 100] — no floor adjustment is needed:
+
+```
+final_score = clip(geometric_mean × 100, 0, 100)
+```
+
+| Geometric mean | Score | Meaning |
+|---|---|---|
+| 1.00 | 100 | All dimensions perfect |
+| 0.87 | 87 | All dimensions at typical real-world levels |
+| 0.70 | 70 | Noticeably below average across the board |
+| any dimension → 0 | → 0 | Critical failure in one dimension |
+
+### 7.5 Score Interpretation
 
 | Range | Label | Meaning |
 |---|---|---|
-| 75–100 | High Resilience | Multiple viable routes, low chokepoint dependency, strong connectivity |
-| 50–74 | Moderate Resilience | Some redundancy but notable concentration risks |
-| 25–49 | Low Resilience | Limited alternatives or significant chokepoint exposure |
-| 0–24 | Critical Risk | Single route, high chokepoint dependence, or poor connectivity |
+| 75–100 | High Resilience | Strong across all five dimensions — reliable delivery, redundant paths, calm weather, major ports, low geopolitical risk |
+| 50–74 | Moderate Resilience | Acceptable overall but with identifiable weak dimensions — monitor actively |
+| 25–49 | Low Resilience | One or more dimensions significantly below average — consider route diversification |
+| 0–24 | Critical Risk | Multiple dimensions failing simultaneously — immediate rerouting recommended |
 
 ---
 
@@ -416,16 +438,21 @@ Scenario simulation modifies a copy of the base graph in real-time. The original
 
 ### 8.1 Chokepoint Closure
 
-Blocking a chokepoint removes its associated country nodes from the graph:
+Blocking a chokepoint removes its associated **maritime waypoints** from the internal waypoint graph and reprices all affected trade edges:
 
-| Chokepoint | Countries Removed | Map Marker Location |
+| Chokepoint | Waypoints Blocked | Detour Route |
 |---|---|---|
-| Suez Canal | Egypt | Suez Canal waypoints (29.9°N, 31.3°N) |
-| Panama Canal | Panama | Panama Canal waypoints (9.4°N Atlantic / 8.9°N Pacific) |
-| Strait of Hormuz | Iran, Oman | Strait of Hormuz (26.5°N, 56.5°E) |
-| Strait of Malacca | Singapore, Malaysia, Indonesia | Strait of Malacca (1.5°N, 103.5°E) |
+| Suez Canal | `SUEZ_S`, `SUEZ_N` | Cape of Good Hope (`IND_OCEAN_S → CAPE_GOOD_HOPE → S_ATLANTIC`) |
+| Panama Canal | `PANAMA_ATL`, `PANAMA_PAC` | Cape Horn (`S_PACIFIC → CAPE_HORN → S_ATLANTIC`) |
+| Strait of Hormuz | `HORMUZ` | Arabian Sea re-routing |
+| Strait of Malacca | `MALACCA` | Lombok / Sunda Strait alternative |
 
-When a node is removed, all edges passing through it vanish. Routes that previously transited Singapore, for example, must now find alternatives — or fail entirely if none exist within the hop limit.
+Country nodes are **not** removed. When Suez is blocked, `SUEZ_S` and `SUEZ_N` are removed from the maritime waypoint graph. `_apply_detour_penalty()` then:
+1. Runs Dijkstra on the normal waypoint graph and the blocked waypoint graph for each trade edge
+2. Detects which edges' normal maritime path crosses the blocked waypoints
+3. Multiplies those edge weights by the detour ratio: `alternative_km / normal_km`
+
+Example: Suez blocked → China→Germany edge × 1.35 (Cape of Good Hope route is ~35% longer). Egypt remains a valid trading partner and transshipment hub — routes transiting it become expensive rather than structurally impossible, reflecting real-world rerouting economics.
 
 ### 8.2 Tariff Surcharges
 
@@ -444,8 +471,8 @@ For example, a 25% US tariff → all edges touching the United States get weight
 ### 8.3 Combined Scenarios
 
 Chokepoint closures and tariff surcharges can be combined. The graph modification is applied atomically:
-1. Remove blocked nodes first
-2. Apply tariff multipliers to remaining edges
+1. Reprice edges crossing blocked chokepoint waypoints (detour ratio)
+2. Apply tariff multipliers to affected edges
 
 The rerouted result is displayed alongside the baseline, showing cost premium, lead time delta, and whether the path changed.
 
@@ -518,7 +545,7 @@ The Streamlit app has three pages accessible from the sidebar.
 
 - **Detailed scores table** — sortable, with full corridor, product, score, and label
 
-- **Drill-down component bar chart** — select any corridor + product to see exactly how its RS score breaks down into Alt, Chk, Bil, and Fleet contributions (max 47/28/17/7 pts respectively)
+- **Drill-down component bar chart** — select any corridor + product to see exactly how its RS score breaks down into Reliability, Redundancy, Weather, Ports, and Security contributions (max 20 pts each)
 
 **Key questions this answers:**
 - *Which of our top trade corridors are most at risk overall?*
@@ -570,10 +597,10 @@ sentinel-trade/
 │   │   └── predictor.py                 # Inference + per-edge explanation
 │   ├── graph/
 │   │   ├── builder.py                   # Graph construction (5 DiGraphs, 2021)
-│   │   ├── routing.py                   # Yen's K-shortest + multi-criteria selection
-│   │   └── chokepoints.py               # Chokepoint node removal + tariff multipliers
+│   │   ├── routing.py                   # Yen's K-shortest + multi-criteria selection + detour repricing
+│   │   └── chokepoints.py               # Chokepoint waypoint definitions + tariff multipliers
 │   ├── scoring/
-│   │   └── resilience.py                # AHP Resilience Score (Alt/Chk/Bil/Fleet)
+│   │   └── resilience.py                # 5-factor Resilience Score (Reliability/Redundancy/Weather/Ports/Security)
 │   └── viz/
 │       └── globe.py                     # Plotly Scattergeo visualisations
 ├── data/
@@ -592,7 +619,7 @@ sentinel-trade/
 │   ├── 03_model_training.ipynb          # XGBoost training + evaluation
 │   ├── 04_graph_engine_validation.ipynb # Graph routing + Suez Canal scenario
 │   └── 05_resilience_score.ipynb        # RS formula + sensitivity analysis
-└── config.py                            # All constants: paths, products, AHP weights, chokepoints
+└── config.py                            # All constants: paths, products, RS weights, chokepoint waypoints
 ```
 
 ---

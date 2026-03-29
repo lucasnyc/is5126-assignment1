@@ -3,17 +3,20 @@ Resilience Score — a composite 0-100 index for supply chain route resilience.
 
 5-factor model aligned with maritime resilience literature:
 
-    RS = 100 × (0.37×Rel + 0.21×Flex + 0.21×Env + 0.11×Port + 0.10×Sec)
+    RS = 100 × (Reliability × Redundancy × Weather × Ports × Security)^0.20
 
-Components (explainable user labels):
-    Rel  — Delivery Confidence : historical on-time rate & delay severity
-    Flex — Backup Options      : route redundancy & chokepoint avoidance
-    Env  — Weather Safety      : environmental stability along route
-    Port — Port Health         : port infrastructure capacity & congestion
-    Sec  — Security Level      : geopolitical risk & conflict exposure
+Geometric mean aggregation (equal weights, 0.20 each). Non-compensatory:
+if any single dimension approaches 0, the total score collapses to 0 regardless
+of how well the other dimensions score.
 
-Equal weights (0.20 each) across all five factors.
-See config.py for the weight constants.
+Components:
+    Reliability  (rel)  — historical on-time rate & delay severity
+    Redundancy   (flex) — route redundancy & chokepoint avoidance
+    Weather      (env)  — environmental stability along route
+    Ports        (port) — port infrastructure capacity & congestion
+    Security     (sec)  — geopolitical risk & conflict exposure
+
+See config.py for references.
 """
 
 import os
@@ -191,20 +194,17 @@ class ResilienceScorer:
         port = self._port_component(path_k1, G)
         sec  = self._sec_component(path_k1, G)
 
+        # Geometric mean: RS = 100 × ∏(C_i ^ w_i)
+        # Non-compensatory — any component near 0 collapses the total score.
+        # With equal weights (0.20 each) this reduces to the 5th-root of the product.
         raw_score = (
-            RS_WEIGHT_REL  * rel
-            + RS_WEIGHT_FLEX * flex
-            + RS_WEIGHT_ENV  * env
-            + RS_WEIGHT_PORT * port
-            + RS_WEIGHT_SEC  * sec
+            (rel  ** RS_WEIGHT_REL)
+            * (flex ** RS_WEIGHT_FLEX)
+            * (env  ** RS_WEIGHT_ENV)
+            * (port ** RS_WEIGHT_PORT)
+            * (sec  ** RS_WEIGHT_SEC)
         )
-        # Normalise to 0–100 using a floor of 0.50.
-        # The raw weighted sum clusters between 0.70–0.95 for real-world routes.
-        # Mapping [0.50, 1.00] → [0, 100] spreads scores across the full scale:
-        #   raw=0.50 → 0   (Critical),  raw=0.75 → 50 (Moderate),
-        #   raw=0.87 → 74  (High),      raw=0.95 → 90 (High),  raw=1.00 → 100
-        _FLOOR = 0.50
-        final_score = round(float(np.clip((raw_score - _FLOOR) / (1.0 - _FLOOR) * 100, 0, 100)), 1)
+        final_score = round(float(np.clip(raw_score * 100, 0, 100)), 1)
 
         return {
             "score":          final_score,
@@ -215,11 +215,11 @@ class ResilienceScorer:
             "sec":            round(sec,  3),
             "label":          _score_label(final_score),
             "components_pct": {
-                "Delivery Confidence": round(rel  * RS_WEIGHT_REL  * 100, 1),
-                "Backup Options":      round(flex * RS_WEIGHT_FLEX * 100, 1),
-                "Weather Safety":      round(env  * RS_WEIGHT_ENV  * 100, 1),
-                "Port Health":         round(port * RS_WEIGHT_PORT * 100, 1),
-                "Security Level":      round(sec  * RS_WEIGHT_SEC  * 100, 1),
+                "Reliability": round(rel  * 100, 1),
+                "Redundancy":  round(flex * 100, 1),
+                "Weather":     round(env  * 100, 1),
+                "Ports":       round(port * 100, 1),
+                "Security":    round(sec  * 100, 1),
             },
         }
 
@@ -293,8 +293,10 @@ def sensitivity_analysis(scorer: ResilienceScorer,
             scale = remaining / other_sum
             new_weights = {k: (new_w if k == comp else v * scale)
                            for k, v in weights.items()}
-            raw_s = sum(new_weights[k] * comp_vals[k] for k in weights)
-            s = float(np.clip((raw_s - 0.50) / 0.50 * 100, 0, 100))
+            raw_s = 1.0
+            for k in weights:
+                raw_s *= comp_vals[k] ** new_weights[k]
+            s = float(np.clip(raw_s * 100, 0, 100))
             if comp not in results["perturbations"]:
                 results["perturbations"][comp] = {}
             results["perturbations"][comp][label] = round(float(s), 1)

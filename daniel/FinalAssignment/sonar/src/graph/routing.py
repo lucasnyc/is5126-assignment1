@@ -16,7 +16,7 @@ from config import (
     K_ROUTES, MAX_HOPS, MAX_HOPS_FALLBACK, COUNTRY_COORDS,
     MARITIME_WAYPOINTS, MARITIME_EDGES, COUNTRY_PORT_WAYPOINT, CHOKEPOINT_WAYPOINTS,
 )
-from src.graph.chokepoints import get_countries_to_remove, chokepoint_exposure
+from src.graph.chokepoints import chokepoint_exposure
 
 # Average container ship speed: 15 knots = 27.78 km/h = 666.7 km/day
 _SHIP_SPEED_KM_PER_DAY = 666.7
@@ -321,23 +321,24 @@ def apply_scenario(
 ) -> nx.DiGraph:
     """
     Return a modified copy of G with:
-      - Chokepoint country nodes removed
+      - Edge weights repriced for blocked chokepoints (via waypoint detour ratio)
       - Edge weights multiplied by tariff multipliers
+
+    Country nodes are never removed. When a chokepoint is blocked (e.g. Suez),
+    the associated maritime waypoints are removed from the internal waypoint graph,
+    and every trade edge whose maritime path crosses those waypoints is repriced
+    by the detour ratio (alternative_km / normal_km). This makes routes that
+    transit the blocked waterway economically unattractive rather than structurally
+    impossible — the country (e.g. Egypt) remains a valid trading partner.
 
     IMPORTANT: Never mutates the original cached graph.
     """
     H = G.copy()  # shallow copy of graph structure; deep copy of dicts
 
-    # Remove blocked chokepoint nodes
     if blocked_chokepoints:
-        to_remove = get_countries_to_remove(blocked_chokepoints)
-        for country in to_remove:
-            if country in H:
-                H.remove_node(country)
-        # Reprice all edges whose maritime path crosses the blocked chokepoint.
-        # This ensures ML-predicted direct edges (e.g. China→Germany) correctly
-        # reflect the detour cost — the router can no longer "ignore" Suez by
-        # using a straight imputed edge that doesn't pass through Egypt.
+        # Reprice edges that normally route through blocked waypoints.
+        # The waypoint graph (with SUEZ_S/SUEZ_N removed) forces Dijkstra to
+        # find the Cape of Good Hope detour and returns its cost ratio.
         _apply_detour_penalty(H, blocked_chokepoints)
 
     # Apply tariff multipliers to edge weights

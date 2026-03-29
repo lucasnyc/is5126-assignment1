@@ -11,8 +11,12 @@ from config import CHOKEPOINTS, ALL_CHOKEPOINT_COUNTRIES, TARIFF_REGIONS
 
 def get_countries_to_remove(blocked_chokepoints: list[str]) -> set[str]:
     """
+    DEPRECATED — no longer called by apply_scenario(). Country nodes are not
+    removed when a chokepoint is blocked; only _apply_detour_penalty() reprices
+    affected edges. Kept for backward compatibility.
+
     Given a list of chokepoint display names (e.g. ['Suez Canal', 'Panama Canal']),
-    return the set of country node names to remove from the graph.
+    return the set of country node names associated with each chokepoint.
     """
     countries = set()
     for cp in blocked_chokepoints:

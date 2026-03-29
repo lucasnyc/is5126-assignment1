@@ -74,8 +74,8 @@ def test_score_components_non_negative(scorer, simple_graph):
 def test_score_has_all_component_labels(scorer, simple_graph):
     result = scorer.score(["A", "B", "C"], 4.0, simple_graph)
     expected_labels = {
-        "Delivery Confidence", "Backup Options", "Weather Safety",
-        "Port Health", "Security Level",
+        "Reliability", "Redundancy", "Weather",
+        "Ports", "Security",
     }
     assert set(result["components_pct"].keys()) == expected_labels
 

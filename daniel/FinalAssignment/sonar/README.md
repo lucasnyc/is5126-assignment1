@@ -194,19 +194,23 @@ Run these 5 scenarios in sequence for a compelling industry pitch:
 
 ## Resilience Score Formula
 
-The RS is a novel composite 0–100 index integrating four risk dimensions:
+The RS is a composite 0–100 index using a **geometric mean** across five resilience dimensions (non-compensatory aggregation):
 
 ```
-RS = 100 × (0.47 × Alt + 0.28 × Chk + 0.17 × Bil + 0.07 × Fleet)
+RS = 100 × (Reliability × Redundancy × Weather × Ports × Security)^0.20
 ```
+
+Because each component enters as an exponent, any single dimension near 0 collapses the total score — a route through a conflict zone or blocked chokepoint cannot be offset by strong port performance elsewhere.
 
 | Component | Weight | Definition |
 |---|---|---|
-| **Alt** | 47% | Alternative path redundancy: `max(0, 1 − premium)` where premium = (cost_k2 − cost_k1)/cost_k1. Zero alternatives → Alt = 0. |
-| **Chk** | 28% | Chokepoint avoidance: `1 − (chokepoint countries on path / 7 total)` |
-| **Bil** | 17% | Bilateral LSCI quality along route edges, normalised by 95th-percentile. |
-| **Fleet** | 7% | Average merchant fleet % of transit nations, normalised by global median. |
+| **Reliability** | 20% | On-time delivery rate (60%) + inverse mean delay (40%) across path countries |
+| **Redundancy**  | 20% | Route redundancy — cost premium of 2nd-best route (60%) + chokepoint avoidance (40%) |
+| **Weather**     | 20% | `1 − mean weather severity` across path countries (severity mapped from 48 condition strings) |
+| **Ports**       | 20% | TEU throughput capacity (60%, normalised to 95th percentile) + congestion avoidance (40%) |
+| **Security**    | 20% | Inverse geopolitical conflict rate (50%) + inverse Geopolitical Risk Index (50%) |
 
+All five factors carry equal weight. The raw weighted sum is mapped from [0.50, 1.00] → [0, 100].
 Sensitivity analysis (±10% weight perturbation) confirms score orderings are stable within ±5 points.
 
 ---
@@ -241,12 +245,18 @@ The imputation task predicts freight rates for routes that have never been obser
 
 ## Chokepoint Reference
 
-| Chokepoint | Node(s) Removed | Affected Trade |
+| Chokepoint | Waypoints Blocked | Detour Route |
 |---|---|---|
-| Suez Canal | Egypt | Europe ↔ Asia |
-| Panama Canal | Panama | US East Coast ↔ Asia |
-| Strait of Hormuz | Iran, Oman | Global energy / Gulf exports |
-| Strait of Malacca | Singapore, Malaysia, Indonesia | South China Sea → Indian Ocean |
+| Suez Canal | `SUEZ_S`, `SUEZ_N` | Cape of Good Hope (`IND_OCEAN_S → CAPE_GOOD_HOPE → S_ATLANTIC`) |
+| Panama Canal | `PANAMA_ATL`, `PANAMA_PAC` | Cape Horn (`S_PACIFIC → CAPE_HORN → S_ATLANTIC`) |
+| Strait of Hormuz | `HORMUZ` | Arabian Sea re-routing |
+| Strait of Malacca | `MALACCA` | Lombok / Sunda Strait alternative |
+
+Country nodes (e.g. Egypt) are **not** removed from the trade graph when a chokepoint is blocked.
+Instead, all trade edges whose maritime path normally crosses the blocked waypoints are repriced
+by a detour ratio (`alternative_km / normal_km`). Egypt remains a valid trading partner and
+transshipment hub — routes transiting it simply become economically unattractive rather than
+structurally impossible, reflecting the real-world cost of the Cape of Good Hope reroute.
 
 ---
 

@@ -102,7 +102,7 @@ MARITIME_WAYPOINTS = {
     "RED_SEA":       (20.0,   38.5),
     "SUEZ_S":        (29.9,   32.6),   # Suez (Red Sea end)
     "SUEZ_N":        (31.3,   32.3),   # Suez (Mediterranean end)
-    "CAPE_GOOD_HOPE":(-34.4,  18.5),
+    "CAPE_GOOD_HOPE":(-34.4,  18.5),   # Suez detour anchor: IND_OCEAN_S→CAPE_GOOD_HOPE→S_ATLANTIC
     # Atlantic
     "S_ATLANTIC":    (-25.0,  -5.0),
     "N_ATLANTIC":    ( 35.0, -40.0),
@@ -147,7 +147,7 @@ MARITIME_EDGES = [
     ("IND_OCEAN_N", "ARABIAN_SEA"),
     ("IND_OCEAN_N", "GULF_ADEN"),
     ("IND_OCEAN_N", "IND_OCEAN_S"),
-    ("IND_OCEAN_S", "CAPE_GOOD_HOPE"),
+    ("IND_OCEAN_S", "CAPE_GOOD_HOPE"),   # Cape detour — activates when Suez blocked
     ("ARABIAN_SEA", "HORMUZ"),
     ("ARABIAN_SEA", "GULF_ADEN"),
     ("GULF_ADEN",   "BAB_EL"),
@@ -155,7 +155,7 @@ MARITIME_EDGES = [
     ("RED_SEA",     "SUEZ_S"),
     ("SUEZ_S",      "SUEZ_N"),          # Suez Canal
     # Atlantic
-    ("CAPE_GOOD_HOPE", "S_ATLANTIC"),
+    ("CAPE_GOOD_HOPE", "S_ATLANTIC"),    # Cape detour — completes bypass to Atlantic
     ("S_ATLANTIC",  "N_ATLANTIC"),
     ("N_ATLANTIC",  "CARIBBEAN"),
     ("N_ATLANTIC",  "GIBRALTAR"),
@@ -343,20 +343,20 @@ K_ROUTES          = 3     # number of alternative routes to return
 MAX_WEIGHT        = 999.0 # sentinel weight for non-existent edges (not added to graph)
 
 # ─── Resilience Score weights ─────────────────────────────────────────────────
-# 5-factor model aligned with maritime resilience literature.
-# Equal weights (0.20 each) across all five factors.
+# 5-factor model — equal weighting across all resilience dimensions.
+# Each factor carries 20%, treating no single dimension as inherently dominant.
 #
 # References:
-#   - Rel: Carrier Performance & E-commerce Lead Time Reliability (PDF §4)
-#   - Flex: Route Flexibility and Redundancy (PDF §3)
-#   - Env: Environmental Stability Index (PDF §1, professor's suggestion)
-#   - Port: Nodal Congestion Risk (PDF §2)
-#   - Sec: Geopolitical and Infrastructure Security (PDF §5)
-RS_WEIGHT_REL  = 0.20   # delivery confidence
-RS_WEIGHT_FLEX = 0.20   # backup options
-RS_WEIGHT_ENV  = 0.20   # weather safety
-RS_WEIGHT_PORT = 0.20   # port health
-RS_WEIGHT_SEC  = 0.20   # security level
+#   - Reliability:  Carrier Performance & E-commerce Lead Time Reliability (PDF §4)
+#   - Redundancy:   Route Flexibility and Redundancy (PDF §3)
+#   - Weather:      Environmental Stability Index (PDF §1, professor's suggestion)
+#   - Ports:        Nodal Congestion Risk (PDF §2)
+#   - Security:     Geopolitical and Infrastructure Security (PDF §5)
+RS_WEIGHT_REL  = 0.20   # Reliability
+RS_WEIGHT_FLEX = 0.20   # Redundancy
+RS_WEIGHT_ENV  = 0.20   # Weather
+RS_WEIGHT_PORT = 0.20   # Ports
+RS_WEIGHT_SEC  = 0.20   # Security
 # Sum = 1.00 ✓
 
 # ─── City → Country mapping (disruption dataset) ─────────────────────────────

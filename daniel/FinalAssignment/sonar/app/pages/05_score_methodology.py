@@ -61,20 +61,20 @@ st.markdown("""
 <div style="background:#161b22;border:1px solid #21262d;border-left:4px solid #9B59B6;
             border-radius:8px;padding:20px 24px;margin:8px 0 16px 0;font-family:monospace">
     <div style="font-size:15px;font-weight:700;color:#e6edf3;margin-bottom:6px">
-        RS = 100 × (0.20·Rel + 0.20·Flex + 0.20·Env + 0.20·Port + 0.20·Sec)
+        RS = 100 × (Reliability × Redundancy × Weather × Ports × Security)^0.20
     </div>
     <div style="font-size:12px;color:#8B949E">
         Each component ∈ [0, 1] &nbsp;|&nbsp; RS ∈ [0, 100] &nbsp;|&nbsp;
-        Equal weights (0.20 each) across all five factors
+        Geometric mean — any dimension near 0 collapses the total score
     </div>
 </div>
 """, unsafe_allow_html=True)
 
 # Weight bar chart
-_factors = ["Delivery Confidence", "Backup Options", "Weather Safety", "Port Health", "Security Level"]
+_factors = ["Reliability", "Redundancy", "Weather", "Ports", "Security"]
 _weights = [RS_WEIGHT_REL, RS_WEIGHT_FLEX, RS_WEIGHT_ENV, RS_WEIGHT_PORT, RS_WEIGHT_SEC]
 _colors  = ["#4A90D9", "#27AE60", "#F39C12", "#9B59B6", "#E74C3C"]
-_keys    = ["Rel", "Flex", "Env", "Port", "Sec"]
+_keys    = ["Reliability", "Redundancy", "Weather", "Ports", "Security"]
 
 fig_weights = go.Figure(go.Bar(
     x=_factors,
@@ -86,7 +86,7 @@ fig_weights = go.Figure(go.Bar(
 ))
 fig_weights.update_layout(
     height=280,
-    yaxis=dict(title="Weight (%)", range=[0, 30], gridcolor="#21262d", tickformat=".0f"),
+    yaxis=dict(title="Weight (%)", range=[0, 22], gridcolor="#21262d", tickformat=".0f"),
     xaxis=dict(gridcolor="#21262d"),
     paper_bgcolor=COLORS["paper"],
     plot_bgcolor=COLORS["paper"],
@@ -101,8 +101,8 @@ section_header("🔍", "Factor Breakdown", "What each component measures and why
 
 _factor_details = [
     {
-        "key":    "Rel",
-        "label":  "Delivery Confidence",
+        "key":    "Reliability",
+        "label":  "Reliability",
         "weight": RS_WEIGHT_REL,
         "color":  "#4A90D9",
         "icon":   "📦",
@@ -117,8 +117,8 @@ _factor_details = [
         "interpretation": "Countries with Suez-route exposure (India, UK) score lower due to geopolitical-conflict delays (83–85% OTD). Atlantic and commodity routes score highest (89–91% OTD).",
     },
     {
-        "key":    "Flex",
-        "label":  "Backup Options",
+        "key":    "Redundancy",
+        "label":  "Redundancy",
         "weight": RS_WEIGHT_FLEX,
         "color":  "#27AE60",
         "icon":   "🔀",
@@ -133,8 +133,8 @@ _factor_details = [
         "interpretation": "Isolated island routes (Japan, Australia) score low on Flex due to few alternative hub connections. Major hub-to-hub corridors (China–US, China–Germany) score high.",
     },
     {
-        "key":    "Env",
-        "label":  "Weather Safety",
+        "key":    "Weather",
+        "label":  "Weather",
         "weight": RS_WEIGHT_ENV,
         "color":  "#F39C12",
         "icon":   "🌦",
@@ -150,8 +150,8 @@ _factor_details = [
         "interpretation": "Tropical routes through Southeast Asia and the Indian Ocean score lower. Northern European and trans-Pacific routes benefit from more moderate seasonal weather profiles.",
     },
     {
-        "key":    "Port",
-        "label":  "Port Health",
+        "key":    "Ports",
+        "label":  "Ports",
         "weight": RS_WEIGHT_PORT,
         "color":  "#9B59B6",
         "icon":   "🏗",
@@ -167,8 +167,8 @@ _factor_details = [
         "interpretation": "China, South Korea, and the US score high (massive TEU throughput). Brazil and the Netherlands score lower due to observed port congestion in the disruption dataset.",
     },
     {
-        "key":    "Sec",
-        "label":  "Security Level",
+        "key":    "Security",
+        "label":  "Security",
         "weight": RS_WEIGHT_SEC,
         "color":  "#E74C3C",
         "icon":   "🔐",
@@ -214,6 +214,30 @@ for det in _factor_details:
             unsafe_allow_html=True,
         )
     st.write("")
+
+# ── 3. Weighting rationale ────────────────────────────────────────────────────
+section_header("⚖️", "Aggregation Approach", "Geometric mean — non-compensatory by design")
+
+st.markdown("""
+<div style="background:#161b22;border:1px solid #21262d;border-radius:8px;
+            padding:16px 20px;font-size:13px;line-height:1.75;color:#c9d1d9">
+    <b style="color:#e6edf3">Why geometric mean, not arithmetic?</b><br><br>
+    An additive (arithmetic) model is <i>compensatory</i>: a perfect score in
+    <b style="color:#9B59B6">Ports</b> and <b style="color:#F39C12">Weather</b>
+    can mathematically offset a near-zero score in
+    <b style="color:#E74C3C">Security</b> — producing a "Moderate Resilience"
+    result for a route through an active warzone. That is not how supply chains
+    fail in the real world.<br><br>
+    The geometric mean is <i>non-compensatory</i>: because each component enters
+    as an exponent, any single dimension approaching 0 drives the entire score
+    toward 0 regardless of the other four. A catastrophic failure in one node
+    breaks the chain — the score reflects that.<br><br>
+    With equal exponents (0.20 each), the formula reduces to the <b>5th root of
+    the product</b> of all five components. All dimensions still carry equal
+    structural weight; no manual priority ranking is applied.
+</div>
+""", unsafe_allow_html=True)
+
 
 # ── 4. Scoring labels ─────────────────────────────────────────────────────────
 section_header("🏷", "Score Interpretation")
@@ -390,22 +414,22 @@ section_header("📂", "Data Sources")
 _sources = [
     ("global_supply_chain_disruption_v1.csv",
      "10,000 shipment records across 6 major trade lanes. Provides per-country OTD rates, "
-     "mean delay, port congestion rates, and geopolitical conflict rates used in Rel, Port, and Sec.",
-     "Rel · Port · Sec"),
+     "mean delay, port congestion rates, and geopolitical conflict rates used in Reliability, Ports, and Security.",
+     "Reliability · Ports · Security"),
     ("country_date_conditions.csv",
      "129,000+ daily weather observations for 211 countries over 669 dates. Each condition "
      "string (e.g. 'Heavy rain', 'Blizzard') is mapped to a [0–1] severity score to compute "
      "per-country mean weather risk.",
-     "Env"),
+     "Weather"),
     ("container_port_throughput.csv",
      "UNCTAD container port TEU throughput by country, 2016–2021. Used as a proxy for port "
      "infrastructure capacity — normalised to the 95th percentile globally.",
-     "Port"),
+     "Ports"),
     ("Graph structure (Yen's K-shortest paths)",
      "Route alternatives and chokepoint exposure are computed live from the trade graph at "
      "query time. The cost premium of the 2nd-best route quantifies how 'trapped' a shipper "
      "is on a given corridor.",
-     "Flex"),
+     "Redundancy"),
 ]
 
 for fname, desc, factors in _sources:
