@@ -36,7 +36,7 @@ Graph Construction   (5 directed weighted graphs: 2021 × 5 products)
       ↓
 Routing + Scoring    (Yen's K-shortest + 5-factor Resilience Score)
       ↓
-Streamlit Dashboard  (3-page interactive app)
+Streamlit Dashboard  (5-page interactive app)
 ```
 
 ---
@@ -324,6 +324,52 @@ For the Route Explorer, a pool of up to 20 candidate routes is generated, then t
 
 The three winners are displayed side-by-side on the globe, coloured green (resilient), blue (cheap), and orange (fast).
 
+### 6.7 Triple-Pass Pareto Frontier
+
+**Function**: `find_pareto_frontier()` in `src/graph/routing.py`
+
+Single-pass Yen's K-shortest can only optimise for one objective at a time. A cost-optimal search will systematically miss routes that are slightly more expensive but dramatically faster or more resilient — they never appear in the top-K cost-ranked candidates. The triple-pass method solves this by running three independent Yen's searches, each on a differently-weighted copy of the graph, then merging the results.
+
+#### The Three Passes
+
+| Pass | Graph transformation | Objective |
+|---|---|---|
+| **Pass 1 — Cost** | Original graph (freight rates as weights) | Minimise total freight cost |
+| **Pass 2 — Lead Time** | Re-weight each edge: `weight = maritime_leg_km(u,v) / ship_speed_km_per_day` | Minimise sailing days (waypoint-aware, honours chokepoint detours) |
+| **Pass 3 — Resilience** | Re-weight each edge: `weight = 1 / (RS_score(u,v) + ε)` | Maximise resilience (minimising inverted RS is equivalent) |
+
+Each pass runs `find_k_routes()` with the same hub-qualification and detour-ratio filters described in §6.2–6.4, collecting `K_PASS` candidate routes.
+
+**Why three separate graphs?** The graph topology (which countries connect to which) is identical across all three passes — only the edge weights change. This means each pass can discover different *structural paths* that would never surface in a single-objective search. For example, a route via Tanjung Pelepas (Malaysia) might be slightly costlier than direct but significantly faster; the lead-time pass will rank it highly while the cost pass ignores it entirely.
+
+#### Merge and Normalisation
+
+After all three passes, routes are pooled and deduplicated by path tuple. Routes discovered during the Lead Time and Resilience passes have weights from modified graphs — these are re-evaluated against the **original freight-rate graph** so every route's cost, lead time, and RS are all measured on a consistent scale before comparison.
+
+#### Pareto Filtering
+
+`pareto_filter()` removes *dominated* routes from the pool. A route R is dominated if another route O satisfies all three conditions simultaneously:
+
+```
+O.cost ≤ R.cost  AND  O.lead_time_days ≤ R.lead_time_days  AND  O.rs ≥ R.rs
+```
+
+with at least one strict inequality. The remaining routes form the **Pareto Efficient Frontier** — no single route on the frontier can be improved on any dimension without getting worse on another.
+
+#### Priority-Weighted Scoring
+
+`score_frontier()` ranks frontier routes by a user-defined weighted objective:
+
+```
+Score = w_r·(RS/100) − w_c·(cost/max_cost) − w_t·(lead_time/max_time)
+```
+
+The weights `w_r`, `w_c`, `w_t` correspond to the Resilience, Cost, and Speed sliders in the Compare Corridors page. All metrics are normalised within the frontier before weighting so that a one-unit change in each slider has a consistent effect regardless of the scale of the underlying values.
+
+#### Why This Matters
+
+Without the triple pass, the candidate pool is biased toward cost-efficient routes. A corridor with a very cheap direct route will fill all K slots with minor cost variants of essentially the same path. The triple-pass ensures structural diversity — routes that dominate on speed or resilience are always represented, even when they are more expensive — giving the Pareto filter meaningful candidates to compare across all three dimensions.
+
 ---
 
 ## 7. Resilience Score
@@ -474,7 +520,7 @@ The rerouted result is displayed alongside the baseline, showing cost premium, l
 
 ## 9. Dashboard Guide
 
-The Streamlit app has three pages accessible from the sidebar.
+The Streamlit app has five pages accessible from the sidebar.
 
 ---
 
@@ -549,7 +595,34 @@ The Streamlit app has three pages accessible from the sidebar.
 
 ---
 
-### Page 3 — Model Explainability (`🔍`)
+### Page 3 — Compare Corridors (`🌐`)
+
+**What it does:** Compares multiple shipping strategies (direct vs. via-hub routing) for a fixed origin-destination pair to find the best diversification option.
+
+**How to use it:**
+
+1. **Set origin and destination** in the sidebar — the page fixes the O-D pair and generates strategy variants
+2. **Select a product** (5 HS categories available)
+3. The page automatically suggests up to 3 geographically sensible hub countries per destination
+4. Optionally **stress-test** strategies under chokepoint closures and tariff shocks
+5. **Adjust priority weights** using sliders (Resilience, Cost, Speed, Redundancy, Rate Stability) to reflect your business priorities
+
+**What you see:**
+
+- **Strategy cards** — up to 4 strategies side by side (Direct + up to 3 via-hub alternatives), each showing cost, lead time, hop count, and RS score
+- **Radar charts** — multi-dimensional profiles comparing all strategies across five axes simultaneously
+- **Pareto frontier analysis** — which strategies dominate (no other strategy is cheaper AND more resilient)
+- **Stress-test results** — how each strategy's cost and RS score change under the active scenario
+
+**Key questions this answers:**
+- *Is it worth routing via Singapore instead of direct — what is the cost/resilience trade-off?*
+- *Which hub country offers the best risk diversification for our key corridor?*
+- *Under a US tariff shock, which strategy survives best?*
+- *Which strategies are dominated and can be eliminated from consideration?*
+
+---
+
+### Page 4 — Model Insights (`🔍`)
 
 **What it does:** Explains *why* the XGBoost model predicted a specific freight rate for a given corridor — and validates the model's overall reliability.
 
@@ -572,16 +645,41 @@ Documents test-set metrics, design decisions (log-transform rationale, temporal 
 
 ---
 
+### Page 5 — Score Methodology (`🛡`)
+
+**What it does:** Educational explainer for the 5-factor Resilience Score model — shows how the formula works, what each component measures, and how to interpret results.
+
+**What you see:**
+
+- **Formula card** — RS = 100 × (Reliability × Redundancy × Weather × Ports × Security)^0.20, with each term explained
+- **Factor breakdown cards** — one per component showing:
+  - Data source and coverage (e.g. TEU throughput from UNCTAD, GRI from disruption dataset)
+  - Exact normalisation formula
+  - What the component is measuring in plain English
+- **Geometric vs. arithmetic mean** — worked numerical examples showing why the geometric mean is non-compensatory (a near-zero Security score collapses the total, not just lowers it slightly)
+- **Score interpretation guide** — 75–100: High, 50–74: Moderate, 25–49: Low, 0–24: Critical
+- **Interactive live scoring** — select any corridor to see the RS calculation in real-time with component-level contributions
+- **Sensitivity analysis** — weight perturbations ±10% showing which components drive score variance most for the selected corridor
+
+**Key questions this answers:**
+- *Why does a route through a politically unstable country score so low even if everything else is strong?*
+- *Which component is dragging down this corridor's score?*
+- *How would the score change if we weighted Security more heavily than the other factors?*
+
+---
+
 ## Appendix: File Structure
 
 ```
-sentinel-trade/
+sonar/
 ├── app/
 │   ├── main.py                          # Home page + session state bootstrap
 │   └── pages/
 │       ├── 01_route_explorer.py         # Multi-criteria routing dashboard
 │       ├── 02_resilience_analysis.py    # Corridor heatmap + drill-down
-│       └── 03_model_explainability.py   # XGBoost feature importance + metrics
+│       ├── 03_compare_corridors.py      # Direct vs. via-hub strategy comparison
+│       ├── 04_model_insights.py         # XGBoost feature importance + metrics
+│       └── 05_score_methodology.py      # Resilience score formula explainer
 ├── src/
 │   ├── data/
 │   │   ├── loaders.py                   # Raw dataset loaders + name normalisation
@@ -592,7 +690,8 @@ sentinel-trade/
 │   ├── graph/
 │   │   ├── builder.py                   # Graph construction (5 DiGraphs, 2021)
 │   │   ├── routing.py                   # Yen's K-shortest + multi-criteria selection + detour repricing
-│   │   └── chokepoints.py               # Chokepoint waypoint definitions + tariff multipliers
+│   │   ├── chokepoints.py               # Chokepoint waypoint definitions + tariff multipliers
+│   │   └── resilience.py                # ResilienceScorer class + sensitivity analysis
 │   ├── scoring/
 │   │   └── resilience.py                # 5-factor Resilience Score (Reliability/Redundancy/Weather/Ports/Security)
 │   └── viz/
@@ -608,11 +707,11 @@ sentinel-trade/
 │           ├── shap_explainer.pkl       # Feature importance dict
 │           └── normalization_constants.pkl  # RS normalisation constants
 ├── notebooks/
-│   ├── 01_data_exploration.ipynb        # EDA on raw datasets
+│   ├── 01_eda_and_data_quality.ipynb    # EDA on raw datasets
 │   ├── 02_feature_engineering.ipynb     # Feature pipeline walkthrough
-│   ├── 03_model_training.ipynb          # XGBoost training + evaluation
+│   ├── 03_ml_model_training.ipynb       # XGBoost training + evaluation
 │   ├── 04_graph_engine_validation.ipynb # Graph routing + Suez Canal scenario
-│   └── 05_resilience_score.ipynb        # RS formula + sensitivity analysis
+│   └── 05_resilience_score_validation.ipynb  # RS formula + sensitivity analysis
 └── config.py                            # All constants: paths, products, RS weights, chokepoint waypoints
 ```
 
