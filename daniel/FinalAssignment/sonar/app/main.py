@@ -235,9 +235,9 @@ _nav_tiles = [
      "recommend the best route for your business profile."),
     ("pages/02_resilience_analysis.py", "#27AE60", "📊", "Resilience Analysis",
      "Heatmap view of resilience scores across the top 20 global trade corridors and "
-     "5 product categories. Drill down into all 5 score components — Delivery Confidence, "
-     "Backup Options, Weather Safety, Port Health, and Security Level."),
-    ("pages/03_compare_corridors.py",   "#58a6ff", "🌐",  "Nearshoring Strategy",
+     "5 product categories. Drill down into all 5 score components — Reliability, "
+     "Redundancy, Weather, Ports, and Security."),
+    ("pages/03_compare_corridors.py",   "#58a6ff", "🌐",  "Corridor Comparison",
      "Fix your manufacturing origin and target market, then compare shipping direct vs. "
      "routing through an intermediate hub country. Stress-test each strategy under tariff "
      "shocks and chokepoint closures to find your most resilient expansion path."),
@@ -399,8 +399,8 @@ _steps = [
      "Applies chokepoint closures and tariff multipliers in real-time — reroutes around "
      "blocked nodes and reprices affected edges instantly."),
     ("5", "Resilience Score", "#9B59B6",
-     "A 0\u2013100 composite index with equal weights (0.20 each) across five factors: "
-     "RS = 100 \u00d7 (0.20\u00b7Rel + 0.20\u00b7Flex + 0.20\u00b7Env + 0.20\u00b7Port + 0.20\u00b7Sec)."),
+     "A 0\u2013100 composite index: RS\u00a0=\u00a0100\u00a0\u00d7\u00a0(Reliability\u00a0\u00d7\u00a0Redundancy\u00a0\u00d7\u00a0Weather\u00a0\u00d7\u00a0Ports\u00a0\u00d7\u00a0Security)^0.20. "
+     "Geometric mean — one near-zero factor collapses the entire score."),
 ]
 
 cols = st.columns(5)
