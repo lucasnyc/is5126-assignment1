@@ -32,6 +32,7 @@ from config import (
 )
 from src.graph.routing import (
     find_k_routes, Route, apply_scenario, maritime_chokepoint_exposure,
+    pareto_filter, score_frontier,
 )
 from src.graph.chokepoints import get_tariff_multipliers
 from src.viz.globe import COLORS, make_route_radar
@@ -322,6 +323,41 @@ if not _valid.empty:
 else:
     df["planning_score"] = 0.0
 
+# ─── Pareto filtering & frontier-based ranking ────────────────────────────────
+# Build lightweight proxy objects so pareto_filter and score_frontier can be
+# applied to the strategy pool (they expect .cost, .lead_time_days, .rs, .path).
+class _StrategyProxy:
+    """Thin wrapper so strategy dicts work with pareto_filter / score_frontier."""
+    def __init__(self, row):
+        self.cost           = float(row["freight_rate"] or 0) / 100.0
+        self.lead_time_days = float(row["lead_time"]    or 0)
+        self.rs             = float(row["rs_score"]     or 0)
+        self.path           = row["path_str"].split(" → ")
+        self.score          = 0.0
+        self._label         = row["label"]
+
+_valid_proxies = [_StrategyProxy(r) for _, r in df[df["freight_rate"].notna()].iterrows()]
+
+# Map sliders to (w_c, w_t, w_r)
+_w_r_raw = w_rs   + w_chk * 0.5
+_w_c_raw = w_cost + w_vol * 0.5
+_w_t_raw = w_lt
+_proxy_total = _w_r_raw + _w_c_raw + _w_t_raw or 1.0
+_w_c = _w_c_raw / _proxy_total
+_w_t = _w_t_raw / _proxy_total
+_w_r = _w_r_raw / _proxy_total
+
+dominated_labels   = set()
+recommended_label  = None
+
+if len(_valid_proxies) > 1:
+    dominated_proxies = [p for p in _valid_proxies if p not in pareto_filter(_valid_proxies)]
+    dominated_labels  = {p._label for p in dominated_proxies}
+
+if _valid_proxies:
+    _scored = score_frontier(_valid_proxies, _w_c, _w_t, _w_r)
+    recommended_label = _scored[0]._label if _scored else None
+
 df_sorted = df.sort_values("planning_score", ascending=False).reset_index(drop=True)
 
 # ─── Ranked strategy cards ─────────────────────────────────────────────────────
@@ -346,6 +382,22 @@ for i, (col, (_, row)) in enumerate(zip(cols, df_sorted.iterrows())):
         '<div style="font-size:10px;color:#8B949E;margin-bottom:6px">No intermediate hub</div>'
     )
 
+    _is_recommended = row["label"] == recommended_label
+    _is_dominated   = row["label"] in dominated_labels
+    _badge_html = ""
+    if _is_recommended:
+        _badge_html = (
+            '<div style="display:inline-block;background:#27AE6033;border:1px solid #27AE60;'
+            'border-radius:4px;padding:2px 8px;font-size:10px;color:#27AE60;margin-bottom:6px">'
+            '★ Recommended</div>'
+        )
+    elif _is_dominated:
+        _badge_html = (
+            '<div style="display:inline-block;background:#F5A62333;border:1px solid #F5A623;'
+            'border-radius:4px;padding:2px 8px;font-size:10px;color:#F5A623;margin-bottom:6px">'
+            '⚠ Dominated</div>'
+        )
+
     with col:
         st.markdown(
             "".join([
@@ -354,6 +406,7 @@ for i, (col, (_, row)) in enumerate(zip(cols, df_sorted.iterrows())):
                 f'<div style="font-size:22px;margin-bottom:4px">{medal}</div>',
                 f'<div style="font-size:14px;font-weight:700;color:#e6edf3;margin-bottom:4px">'
                 f'{row["label"]}</div>',
+                _badge_html,
                 hub_line,
                 '<div style="font-size:10px;color:#8B949E;text-transform:uppercase;'
                 'letter-spacing:.04em">Planning Score</div>',
@@ -381,11 +434,11 @@ st.markdown("---")
 section_header("📊", "Strategy Comparison", "All metrics side by side")
 
 _bar_metrics = {
-    "RS Score (0–100)":        "rs_score",
-    "Freight Rate (%)":        "freight_rate",
-    "Lead Time (days)":        "lead_time",
-    "Chokepoint Exposure (%)": "chk_exposure",
-    "Rate Volatility (σ pp)":  "rate_volatility",
+    "Resilience Score (0–100)": "rs_score",
+    "Freight Cost (%)":         "freight_rate",
+    "Speed (days)":             "lead_time",
+    "Redundancy (% exposure)":  "chk_exposure",
+    "Rate Stability (σ pp)":    "rate_volatility",
 }
 fig_bar = go.Figure()
 for i, (_, row) in enumerate(df_sorted.iterrows()):

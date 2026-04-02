@@ -340,6 +340,7 @@ TARIFF_REGIONS = {
 MAX_HOPS          = 2     # preferred hop limit (direct or 1 transshipment hub)
 MAX_HOPS_FALLBACK = 3     # fallback if no route found within MAX_HOPS
 K_ROUTES          = 3     # number of alternative routes to return
+K_PASS            = 10    # routes per pass in triple-pass Pareto discovery
 MAX_WEIGHT        = 999.0 # sentinel weight for non-existent edges (not added to graph)
 
 # ─── Resilience Score weights ─────────────────────────────────────────────────

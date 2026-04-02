@@ -562,3 +562,244 @@ def make_route_radar(routes: dict) -> go.Figure:
         height=420,
     )
     return fig
+
+
+# ─── Pareto frontier visualizations ──────────────────────────────────────────
+
+def make_pareto_scatter_2d(
+    candidates: list,
+    frontier: list | None = None,
+    highlighted_path: list[str] | None = None,
+) -> go.Figure:
+    """
+    2D bubble chart: x = Freight Cost (%), y = Lead Time (days),
+    bubble size = Resilience Score (larger = more resilient).
+
+    All triple-pass candidates are plotted.  Pareto-efficient routes are shown
+    at full opacity; dominated routes are shown at reduced opacity so the
+    efficient frontier stands out.  Anchor stars mark the three extreme routes
+    (cheapest, fastest, most resilient).  An optional gold diamond highlights
+    the recommended route.
+
+    Parameters
+    ----------
+    candidates        : full pool of Route objects from all three passes
+    frontier          : non-dominated subset; if None, all candidates treated as frontier
+    highlighted_path  : path list of the recommended route
+    """
+    all_routes = candidates or []
+    if not all_routes:
+        fig = go.Figure()
+        fig.update_layout(
+            paper_bgcolor=COLORS["paper"],
+            font=dict(color="#e6edf3"),
+            annotations=[dict(text="No routes found", showarrow=False,
+                              font=dict(color="#e6edf3", size=14))],
+        )
+        return fig
+
+    frontier_paths = {tuple(r.path) for r in (frontier or all_routes)}
+
+    # Identify anchor paths from full pool
+    cheapest_path  = min(all_routes, key=lambda r: r.cost).path
+    fastest_path   = min(all_routes, key=lambda r: r.lead_time_days).path
+    resilient_path = max(all_routes, key=lambda r: r.rs).path
+    anchor_paths   = {tuple(cheapest_path), tuple(fastest_path), tuple(resilient_path)}
+
+    # Scale bubble sizes: RS 0→100 maps to pixel diameter 10→50
+    def _bubble_size(rs: float) -> float:
+        return 10 + (rs / 100.0) * 40
+
+    # Split routes into: dominated background, frontier, anchors, highlighted
+    dominated = [r for r in all_routes if tuple(r.path) not in frontier_paths]
+    eff       = [r for r in all_routes if tuple(r.path) in frontier_paths
+                 and tuple(r.path) not in anchor_paths
+                 and r.path != highlighted_path]
+    anchors   = [r for r in all_routes if tuple(r.path) in anchor_paths
+                 and r.path != highlighted_path]
+    rec       = [r for r in all_routes if r.path == highlighted_path] if highlighted_path else []
+
+    def _hover(r, tag=""):
+        return (
+            f"<b>{tag}{' → '.join(r.path)}</b><br>"
+            f"Cost: {r.cost * 100:.2f}%<br>"
+            f"Lead Time: {r.lead_time_days:.1f} days<br>"
+            f"Resilience: {r.rs:.1f}"
+            + (f"<br>Score: {r.score:.3f}" if getattr(r, "score", 0) else "")
+        )
+
+    data = []
+
+    # ── Dominated routes (faded) ──────────────────────────────────────────────
+    if dominated:
+        data.append(go.Scatter(
+            x=[r.cost * 100 for r in dominated],
+            y=[r.lead_time_days for r in dominated],
+            mode="markers",
+            name="Dominated",
+            marker=dict(
+                size=[_bubble_size(r.rs) for r in dominated],
+                color=[r.rs for r in dominated],
+                colorscale="RdYlGn", cmin=0, cmax=100,
+                opacity=0.25,
+                line=dict(color="#ffffff", width=0.5),
+                sizemode="diameter",
+            ),
+            text=[_hover(r) for r in dominated],
+            hoverinfo="text",
+        ))
+
+    # ── Frontier routes (full opacity) ────────────────────────────────────────
+    if eff:
+        data.append(go.Scatter(
+            x=[r.cost * 100 for r in eff],
+            y=[r.lead_time_days for r in eff],
+            mode="markers",
+            name="Efficient Frontier",
+            marker=dict(
+                size=[_bubble_size(r.rs) for r in eff],
+                color=[r.rs for r in eff],
+                colorscale="RdYlGn", cmin=0, cmax=100,
+                opacity=0.9,
+                line=dict(color="#ffffff", width=1),
+                sizemode="diameter",
+                colorbar=dict(
+                    title="RS Score",
+                    tickfont=dict(color="#e6edf3"),
+                    titlefont=dict(color="#e6edf3"),
+                    len=0.7, x=1.02,
+                ),
+            ),
+            text=[_hover(r) for r in eff],
+            hoverinfo="text",
+        ))
+
+    # ── Anchor routes (star marker + label) ───────────────────────────────────
+    _anchor_labels = {
+        tuple(cheapest_path):  "★ Cheapest",
+        tuple(fastest_path):   "★ Fastest",
+        tuple(resilient_path): "★ Most Resilient",
+    }
+    for r in anchors:
+        lbl = _anchor_labels.get(tuple(r.path), "★")
+        data.append(go.Scatter(
+            x=[r.cost * 100],
+            y=[r.lead_time_days],
+            mode="markers+text",
+            name=lbl,
+            text=[lbl],
+            textposition="top center",
+            textfont=dict(color="#FFD700", size=11),
+            marker=dict(
+                size=_bubble_size(r.rs),
+                color=r.rs,
+                colorscale="RdYlGn", cmin=0, cmax=100,
+                opacity=1.0,
+                symbol="star",
+                line=dict(color="#FFD700", width=1.5),
+                sizemode="diameter",
+            ),
+            hovertext=_hover(r, _anchor_labels.get(tuple(r.path), "") + " "),
+            hoverinfo="text",
+            showlegend=True,
+        ))
+
+    # ── Recommended route (gold diamond) ─────────────────────────────────────
+    for r in rec:
+        data.append(go.Scatter(
+            x=[r.cost * 100],
+            y=[r.lead_time_days],
+            mode="markers+text",
+            name="Recommended",
+            text=["▶ Recommended"],
+            textposition="top center",
+            textfont=dict(color="#FFD700", size=11),
+            marker=dict(
+                size=_bubble_size(r.rs) + 6,
+                color="#FFD700",
+                symbol="diamond",
+                line=dict(color="#ffffff", width=2),
+                sizemode="diameter",
+            ),
+            hovertext=_hover(r, "Recommended — "),
+            hoverinfo="text",
+        ))
+
+    fig = go.Figure(data=data)
+    fig.update_layout(
+        xaxis=dict(
+            title="Cost (% of cargo value)",
+            gridcolor="#21262d",
+            zerolinecolor="#21262d",
+            titlefont=dict(color="#e6edf3"),
+            tickfont=dict(color="#e6edf3"),
+        ),
+        yaxis=dict(
+            title="Lead Time (days)",
+            gridcolor="#21262d",
+            zerolinecolor="#21262d",
+            titlefont=dict(color="#e6edf3"),
+            tickfont=dict(color="#e6edf3"),
+        ),
+        paper_bgcolor=COLORS["paper"],
+        plot_bgcolor=COLORS["geo"],
+        font=dict(color="#e6edf3"),
+        legend=dict(
+            font=dict(color="#e6edf3", size=11),
+            bgcolor="rgba(0,0,0,0)",
+            bordercolor="#21262d",
+        ),
+        margin=dict(l=60, r=80, t=30, b=50),
+        height=480,
+        annotations=[dict(
+            text="Bubble size = Resilience Score",
+            xref="paper", yref="paper",
+            x=0, y=-0.12, showarrow=False,
+            font=dict(color="#8B949E", size=11),
+        )],
+    )
+    return fig
+
+
+# Keep old name as alias so any external callers don't break
+make_pareto_scatter_3d = make_pareto_scatter_2d
+
+
+def make_weight_donut(w_c: float, w_t: float, w_r: float) -> go.Figure:
+    """
+    Donut chart showing the current (w_c, w_t, w_r) priority weight split.
+
+    Used as live feedback alongside What-If sliders.  Colors match CRITERIA_COLORS.
+
+    Parameters
+    ----------
+    w_c, w_t, w_r : raw weight values (need not sum to 1; chart normalises them)
+    """
+    total = w_c + w_t + w_r or 1.0
+    values = [w_c / total, w_t / total, w_r / total]
+    labels = ["Cost Priority", "Speed Priority", "Resilience Priority"]
+    colors = [CRITERIA_COLORS["cheapest"], CRITERIA_COLORS["fastest"],
+              CRITERIA_COLORS["most_resilient"]]
+
+    fig = go.Figure(go.Pie(
+        labels=labels,
+        values=values,
+        hole=0.55,
+        marker=dict(colors=colors, line=dict(color=COLORS["paper"], width=2)),
+        textfont=dict(color="#e6edf3", size=12),
+        hovertemplate="%{label}: %{percent}<extra></extra>",
+    ))
+    fig.update_layout(
+        paper_bgcolor=COLORS["paper"],
+        font=dict(color="#e6edf3"),
+        legend=dict(
+            font=dict(color="#e6edf3", size=11),
+            bgcolor="rgba(0,0,0,0)",
+            orientation="h",
+            yanchor="bottom", y=-0.25,
+            xanchor="center", x=0.5,
+        ),
+        margin=dict(l=10, r=10, t=10, b=40),
+        height=260,
+    )
+    return fig

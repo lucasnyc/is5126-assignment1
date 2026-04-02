@@ -13,7 +13,7 @@ import networkx as nx
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from config import (
-    K_ROUTES, MAX_HOPS, MAX_HOPS_FALLBACK, COUNTRY_COORDS,
+    K_ROUTES, K_PASS, MAX_HOPS, MAX_HOPS_FALLBACK, COUNTRY_COORDS,
     MARITIME_WAYPOINTS, MARITIME_EDGES, COUNTRY_PORT_WAYPOINT, CHOKEPOINT_WAYPOINTS,
 )
 from src.graph.chokepoints import chokepoint_exposure
@@ -268,6 +268,7 @@ class Route:
         self._blocked_wps   = blocked_wps
         self.lead_time_days = self._estimate_lead_time(graph, median_lsci)
         self.has_predicted  = self._check_predicted(graph)
+        self.score          = 0.0   # weighted Pareto score — populated by score_frontier()
 
     def _estimate_lead_time(self, G: nx.DiGraph, median_lsci: float) -> float:
         """
@@ -545,6 +546,186 @@ def find_multi_criteria_routes(
         "fastest":        fastest,
         "most_resilient": most_resilient,
         "_candidates":    candidates,   # full scored pool for downstream filtering
+    }
+
+
+# ─── Triple-pass Pareto frontier ─────────────────────────────────────────────
+
+def _build_lt_graph(G: nx.DiGraph, blocked_wps: frozenset = frozenset()) -> nx.DiGraph:
+    """
+    Return a copy of G where each edge weight = maritime sailing days for that leg.
+    Uses the existing waypoint graph (_maritime_leg_km) so blocked chokepoints
+    automatically inflate lead-time weights via the detour path.
+    """
+    G2 = G.copy()
+    for u, v in G2.edges():
+        dist_km = _maritime_leg_km(u, v, blocked_wps)
+        G2[u][v]["weight"] = dist_km / _SHIP_SPEED_KM_PER_DAY
+    return G2
+
+
+def _build_rs_graph(G: nx.DiGraph, scorer) -> nx.DiGraph:
+    """
+    Return a copy of G where each edge weight = 1 / (RS_of_edge + ε).
+    Minimising this weight via Yen's maximises resilience along the path.
+    """
+    G2 = G.copy()
+    for u, v in G2.edges():
+        rs_result = scorer.score(
+            path_k1=[u, v],
+            cost_k1=G2[u][v]["weight"],
+            G=G2,
+        )
+        G2[u][v]["weight"] = 1.0 / (rs_result["score"] + 1e-3)
+    return G2
+
+
+def pareto_filter(routes: list) -> list:
+    """
+    Return the non-dominated subset of routes (the Pareto Efficient Frontier).
+
+    A route R is dominated if there exists another route O such that:
+        O.cost ≤ R.cost  AND  O.lead_time_days ≤ R.lead_time_days  AND  O.rs ≥ R.rs
+    with at least one strict inequality.
+    """
+    frontier = []
+    for r in routes:
+        dominated = any(
+            o.cost <= r.cost
+            and o.lead_time_days <= r.lead_time_days
+            and o.rs >= r.rs
+            and (o.cost < r.cost or o.lead_time_days < r.lead_time_days or o.rs > r.rs)
+            for o in routes
+            if o is not r
+        )
+        if not dominated:
+            frontier.append(r)
+    return frontier
+
+
+def score_frontier(frontier: list, w_c: float, w_t: float, w_r: float) -> list:
+    """
+    Score and sort frontier routes by the weighted objective:
+        Score = w_r·(RS/100) - w_c·(cost/max_cost) - w_t·(lead_time/max_time)
+
+    All weights are used as-is; caller is responsible for normalising them to
+    sum to 1 if desired (not required for correct ordering).
+
+    Returns the frontier sorted descending by score, with .score set on each Route.
+    """
+    if not frontier:
+        return []
+    max_c = max(r.cost for r in frontier) or 1.0
+    max_t = max(r.lead_time_days for r in frontier) or 1.0
+    for r in frontier:
+        r.score = (
+            w_r * (r.rs / 100.0)
+            - w_c * (r.cost / max_c)
+            - w_t * (r.lead_time_days / max_t)
+        )
+    return sorted(frontier, key=lambda r: -r.score)
+
+
+def find_pareto_frontier(
+    G: nx.DiGraph,
+    source: str,
+    target: str,
+    scorer,
+    k_per_pass: int = K_PASS,
+    cutoff: int = MAX_HOPS,
+    median_lsci: float = 50.0,
+    blocked_wps: frozenset = frozenset(),
+) -> dict:
+    """
+    Triple-pass multi-objective route discovery followed by Pareto filtering.
+
+    Three independent Yen's K-shortest-paths runs are performed, each
+    optimising for a different objective:
+      - Cost Pass:       uses graph edge weights as-is (freight rates)
+      - Time Pass:       re-weights edges by maritime lead time (waypoint-aware)
+      - Resilience Pass: re-weights edges by inverted Resilience Score
+
+    Candidates from all three passes are merged (deduplicated by path), then
+    re-scored consistently on the original graph G.  Pareto filtering surfaces
+    the non-dominated efficient frontier.
+
+    Returns
+    -------
+    dict with keys:
+        "cheapest"       — Route with lowest cost
+        "fastest"        — Route with lowest lead time
+        "most_resilient" — Route with highest RS
+        "candidates"     — full merged pool (list of Route)
+        "frontier"       — Pareto non-dominated subset (list of Route)
+
+    The original keys "cheapest"/"fastest"/"most_resilient" are preserved for
+    backward compatibility with existing UI code.
+    """
+    # ── Pass 1: Cost ──────────────────────────────────────────────────────────
+    cost_routes = find_k_routes(
+        G, source, target, k=k_per_pass, cutoff=cutoff,
+        median_lsci=median_lsci, blocked_wps=blocked_wps,
+    )
+
+    # ── Pass 2: Lead Time ─────────────────────────────────────────────────────
+    G_lt = _build_lt_graph(G, blocked_wps)
+    try:
+        time_routes = find_k_routes(
+            G_lt, source, target, k=k_per_pass, cutoff=cutoff,
+            median_lsci=median_lsci, blocked_wps=blocked_wps,
+        )
+    except (nx.NetworkXNoPath, nx.NodeNotFound):
+        time_routes = []
+
+    # ── Pass 3: Resilience ────────────────────────────────────────────────────
+    G_rs = _build_rs_graph(G, scorer)
+    try:
+        res_routes = find_k_routes(
+            G_rs, source, target, k=k_per_pass, cutoff=cutoff,
+            median_lsci=median_lsci, blocked_wps=blocked_wps,
+        )
+    except (nx.NetworkXNoPath, nx.NodeNotFound):
+        res_routes = []
+
+    # ── Merge & deduplicate by path tuple ─────────────────────────────────────
+    # Routes from time/RS passes have weights from modified graphs; recompute
+    # cost from original G so all metrics are on a consistent scale.
+    pool: dict[tuple, object] = {}
+    for r in cost_routes + time_routes + res_routes:
+        key = tuple(r.path)
+        if key not in pool:
+            # Recompute cost from original graph (relevant for time/RS pass routes)
+            r.cost = sum(
+                G[u][v]["weight"]
+                for u, v in zip(r.path[:-1], r.path[1:])
+                if G.has_edge(u, v)
+            )
+            # Score on original G (lead_time_days already uses waypoint graph correctly)
+            rs_result = scorer.score(
+                path_k1=r.path,
+                cost_k1=r.cost,
+                G=G,
+            )
+            r.rs        = rs_result["score"]
+            r.rs_detail = rs_result
+            pool[key] = r
+
+    candidates = list(pool.values())
+
+    if not candidates:
+        raise nx.NetworkXNoPath(
+            f"No routes found from '{source}' to '{target}'."
+        )
+
+    # ── Pareto filter ─────────────────────────────────────────────────────────
+    frontier = pareto_filter(candidates)
+
+    return {
+        "cheapest":       min(candidates, key=lambda r: r.cost),
+        "fastest":        min(candidates, key=lambda r: r.lead_time_days),
+        "most_resilient": max(candidates, key=lambda r: r.rs),
+        "candidates":     candidates,
+        "frontier":       frontier,
     }
 
 

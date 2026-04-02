@@ -25,9 +25,15 @@ import datetime
 import plotly.graph_objects as go
 
 from config import CHOKEPOINTS, CHOKEPOINT_WAYPOINTS, PRODUCT_NAMES, LATEST_YEAR, DISRUPTION_PROBABILITIES
-from src.graph.routing import find_multi_criteria_routes, apply_scenario
+from src.graph.routing import (
+    find_multi_criteria_routes, find_pareto_frontier,
+    pareto_filter, score_frontier, apply_scenario,
+)
 from src.graph.chokepoints import get_tariff_multipliers
-from src.viz.globe import make_multi_criteria_globe, make_resilience_gauge, make_route_radar, CRITERIA_COLORS
+from src.viz.globe import (
+    make_multi_criteria_globe, make_resilience_gauge, make_route_radar,
+    make_pareto_scatter_2d, make_weight_donut, CRITERIA_COLORS,
+)
 from app.components.theme import inject_global_css, section_header, render_footer, wizard_step_indicator
 
 st.set_page_config(page_title="Route Explorer · SONAR", layout="wide", page_icon="🗺")
@@ -140,9 +146,9 @@ if _cache_key not in _routes_cache:
     median_lsci = float(pd.Series(all_lsci).replace(0, pd.NA).median() or 50.0)
     blocked_wps = frozenset(wp for cp in blocked for wp in CHOKEPOINT_WAYPOINTS.get(cp, []))
     try:
-        _routes_cache[_cache_key] = find_multi_criteria_routes(
+        _routes_cache[_cache_key] = find_pareto_frontier(
             G_active, origin, destination, scorer,
-            k_candidates=20, median_lsci=median_lsci,
+            k_per_pass=10, median_lsci=median_lsci,
             blocked_wps=blocked_wps,
         )
     except nx.NodeNotFound as e:
@@ -156,8 +162,9 @@ routes = _routes_cache[_cache_key]
 
 # ── Globe ─────────────────────────────────────────────────────────────────────
 _globe_cache = st.session_state.setdefault("_re_globe_cache", {})
+_CRITERIA_KEYS = {"cheapest", "fastest", "most_resilient"}
 if _cache_key not in _globe_cache:
-    criteria_dicts = {k: r.to_dict() for k, r in routes.items() if not k.startswith("_")}
+    criteria_dicts = {k: r.to_dict() for k, r in routes.items() if k in _CRITERIA_KEYS}
     _globe_cache[_cache_key] = (
         criteria_dicts,
         make_multi_criteria_globe(criteria_routes=criteria_dicts, blocked_chokepoints=blocked),
@@ -249,114 +256,126 @@ def _compute_persona(answers: dict, routes: dict) -> dict:
     deadline_days = answers.get("deadline_days")          # int or None
     cont_raw      = answers.get("continuity",       "Medium")
     cost_raw      = answers.get("cost_sensitivity", "Moderate sensitivity")
+    deadline_raw  = answers.get("deadline",         "No deadline")
 
-    cont_key = (
-        "High"   if "High"   in cont_raw else
-        "Low"    if "Low"    in cont_raw else "Medium"
-    )
-    cost_key = (
-        "very"   if "Very"   in cost_raw else
-        "absorb" if "absorb" in cost_raw else "moderate"
-    )
+    # ── Derive (w_c, w_t, w_r) weights from wizard answers ────────────────────
+    # Q2: deadline urgency → speed weight
+    if "Firm" in str(deadline_raw):
+        w_t_raw = 5
+    elif "Flexible" in str(deadline_raw):
+        w_t_raw = 3
+    else:
+        w_t_raw = 1
+
+    # Q3: supply continuity → resilience weight
+    if "High" in cont_raw:
+        w_r_raw = 5
+    elif "Low" in cont_raw:
+        w_r_raw = 1
+    else:
+        w_r_raw = 3
+
+    # Q4: cost sensitivity → cost weight
+    if "Very" in cost_raw:
+        w_c_raw = 5
+    elif "absorb" in cost_raw:
+        w_c_raw = 1
+    else:
+        w_c_raw = 3
+
+    _total  = w_c_raw + w_t_raw + w_r_raw or 1
+    w_c     = w_c_raw / _total
+    w_t     = w_t_raw / _total
+    w_r     = w_r_raw / _total
 
     # Economic viability: freight_cost% vs declared margin%
+    _route_pool = {k: v for k, v in routes.items() if k in _CRITERIA_KEYS}
     viability = {
         rk: {
             "viable":      (r.cost * 100) <= margin,
             "freight_pct": r.cost * 100,
         }
-        for rk, r in routes.items()
+        for rk, r in _route_pool.items()
     }
 
     # Deadline compliance
     deadline_ok = {
         rk: (deadline_days is None) or (r.lead_time_days <= deadline_days)
-        for rk, r in routes.items()
+        for rk, r in _route_pool.items()
     }
 
-    # Persona + initial recommendation from priority matrix
-    _persona_map = {
-        ("High",   "absorb"):   ("Risk-Averse Supply Manager",  "most_resilient",
-                                 "Supply continuity is critical — resilience is paramount."),
-        ("High",   "moderate"): ("Risk-Averse Supply Manager",  "most_resilient",
-                                 "Supply continuity is critical — resilience is paramount."),
-        ("High",   "very"):     ("Cautious Cost-Watcher",       "most_resilient",
-                                 "Resilience is non-negotiable, but you monitor costs closely."),
-        ("Medium", "absorb"):   ("Balanced Supply Manager",     "most_resilient",
-                                 "You want reliability without overpaying — resilience wins."),
-        ("Medium", "moderate"): ("Pragmatic Trader",            "cheapest",
-                                 "A balanced profile — cost efficiency with reasonable risk tolerance."),
-        ("Medium", "very"):     ("Lean Trader",                 "cheapest",
-                                 "Cost control is key; you'll manage moderate disruptions."),
-        ("Low",    "absorb"):   ("Speed-Focused Distributor",   "fastest",
-                                 "Buffer stock reduces your risk — speed drives your competitive edge."),
-        ("Low",    "moderate"): ("Cost-Conscious Shipper",      "cheapest",
-                                 "Low supply risk and cost pressure make the cheapest route ideal."),
-        ("Low",    "very"):     ("Cost-Cutter",                 "cheapest",
-                                 "Minimal disruption risk and strong cost pressure — cheapest route fits."),
-    }
+    # ── Score the Pareto frontier with derived weights ─────────────────────────
+    frontier = routes.get("frontier") or list(_route_pool.values())
+    scored   = score_frontier(list(frontier), w_c, w_t, w_r)
 
-    persona_name, rec_key, story = _persona_map.get(
-        (cont_key, cost_key),
-        ("Balanced Supply Manager", "most_resilient",
-         "A balanced profile suggests the most resilient route."),
+    # Find the best viable, on-deadline route from the scored frontier
+    rec_route  = None
+    rec_key    = None
+    for fr in scored:
+        fr_viable   = (fr.cost * 100) <= margin
+        fr_deadline = (deadline_days is None) or (fr.lead_time_days <= deadline_days)
+        if fr_viable and fr_deadline:
+            rec_route = fr
+            break
+    if rec_route is None and scored:
+        rec_route = scored[0]  # best match even if constraints not met
+
+    # Map recommended frontier route back to named key for display compatibility
+    if rec_route is not None:
+        anchor_map = {
+            tuple(routes["cheapest"].path):       "cheapest",
+            tuple(routes["fastest"].path):        "fastest",
+            tuple(routes["most_resilient"].path): "most_resilient",
+        }
+        rec_key = anchor_map.get(tuple(rec_route.path), "most_resilient")
+        # If the frontier recommendation differs from the 3 named routes, store it
+        routes["_frontier_rec"] = rec_route
+    else:
+        rec_key = "most_resilient"
+
+    story = (
+        f"Based on your priorities — Cost {w_c:.0%} · Speed {w_t:.0%} · "
+        f"Resilience {w_r:.0%} — this route scores highest on the Efficient Frontier."
     )
 
     warnings = []
 
-    # Override: recommended route is economically unviable
-    if not viability[rec_key]["viable"]:
-        fp = viability[rec_key]["freight_pct"]
+    # Viability and deadline warnings
+    if rec_route and (rec_route.cost * 100) > margin:
+        fp = rec_route.cost * 100
         warnings.append(
-            f"The **{rec_key.replace('_', ' ')}** route's freight cost ({fp:.1f}%) "
+            f"The recommended route's freight cost ({fp:.1f}%) "
             f"exceeds your profit margin ({margin}%) — this shipment would not be profitable."
         )
-        fallback_order = [k for k in ["most_resilient", "cheapest", "fastest"] if k != rec_key]
-        for alt in fallback_order:
-            if viability[alt]["viable"] and deadline_ok[alt]:
-                rec_key = alt
-                warnings.append(
-                    f"Switching recommendation to **{alt.replace('_', ' ')}** "
-                    f"— the best route within your margin."
-                )
-                break
-        else:
-            warnings.append(
-                "All available routes exceed your profit margin. "
-                "Consider renegotiating freight rates or adjusting your product pricing."
-            )
-
-    # Override: recommended route misses deadline
-    elif deadline_days and not deadline_ok[rec_key]:
-        lt = routes[rec_key].lead_time_days
+        warnings.append(
+            "All frontier routes may exceed your margin. "
+            "Consider renegotiating freight rates or adjusting your product pricing."
+        )
+    elif rec_route and deadline_days and rec_route.lead_time_days > deadline_days:
+        lt = rec_route.lead_time_days
         warnings.append(
             f"The recommended route takes {lt:.0f} days, "
             f"exceeding your {deadline_days}-day deadline."
         )
-        for alt in ["fastest", "cheapest", "most_resilient"]:
-            if alt != rec_key and deadline_ok[alt] and viability[alt]["viable"]:
-                rec_key = alt
-                warnings.append(
-                    f"Switching recommendation to **{alt.replace('_', ' ')}** "
-                    f"— within your deadline and margin."
-                )
-                break
 
-    # Informational warnings for the non-recommended routes
-    for rk in routes:
+    for rk, rv in viability.items():
         if rk == rec_key:
             continue
-        if not viability[rk]["viable"]:
-            fp = viability[rk]["freight_pct"]
+        if not rv["viable"]:
+            fp = rv["freight_pct"]
             warnings.append(
                 f"Note: the **{rk.replace('_', ' ')}** route ({fp:.1f}%) "
                 f"also exceeds your {margin}% margin."
             )
 
     return {
-        "persona_name":    persona_name,
+        "persona_name":    "Frontier Recommender",
         "story":           story,
         "rec_key":         rec_key,
+        "rec_route":       rec_route,    # may be a non-anchor frontier route
+        "w_c":             w_c,
+        "w_t":             w_t,
+        "w_r":             w_r,
         "viability":       viability,
         "deadline_ok":     deadline_ok,
         "warnings":        warnings,
@@ -987,29 +1006,16 @@ def _build_report_html(
 
 # ── Chatbot recommendation text ────────────────────────────────────────────────
 def _chatbot_message(answers: dict, persona_result: dict, routes: dict) -> str:
-    rec_key   = persona_result["rec_key"]
-    rec_route = routes[rec_key]
-    rec_label = _LABELS[rec_key]
+    rec_route = persona_result.get("rec_route") or routes.get(persona_result["rec_key"])
+    rec_label = _LABELS.get(persona_result["rec_key"], "Recommended")
     margin        = persona_result["margin"]
     deadline_days = persona_result["deadline_days"]
-    cont_raw  = answers.get("continuity",       "Medium")
-    cost_raw  = answers.get("cost_sensitivity", "Moderate sensitivity")
+    w_c = persona_result.get("w_c", 0.33)
+    w_t = persona_result.get("w_t", 0.33)
+    w_r = persona_result.get("w_r", 0.34)
 
-    ctx = [f"a **{margin}%** profit margin"]
-    if deadline_days:
-        ctx.append(f"a **{deadline_days}-day** delivery deadline")
-    if "High" in cont_raw:
-        ctx.append("just-in-time supply requirements")
-    elif "Low" in cont_raw:
-        ctx.append("buffer stock on hand")
-    else:
-        ctx.append("moderate supply continuity needs")
-    if "Very" in cost_raw:
-        ctx.append("high sensitivity to cost increases")
-    elif "absorb" in cost_raw:
-        ctx.append("flexibility on cost")
-    else:
-        ctx.append("moderate cost sensitivity")
+    if rec_route is None:
+        return "No recommendation available for this corridor."
 
     path_str      = " → ".join(rec_route.path)
     freight       = rec_route.cost * 100
@@ -1020,7 +1026,7 @@ def _chatbot_message(answers: dict, persona_result: dict, routes: dict) -> str:
     usd_note      = f" ({_fmt_usd(rec_route.cost * shipment_usd)})" if shipment_usd > 0 else ""
 
     return (
-        f"Based on your requirements — {', '.join(ctx)} — "
+        f"Based on your priorities (Cost {w_c:.0%} · Speed {w_t:.0%} · Resilience {w_r:.0%}), "
         f"I recommend the **{rec_label}** route: **{path_str}**. "
         f"At **{freight:.1f}%{usd_note}** freight cost it's {margin_note} your {margin}% margin, "
         f"with a resilience score of **{rs:.0f}/100** and an estimated **{lt}-day** lead time."
@@ -1033,8 +1039,10 @@ def _why_this_route(t_key: str, t_idx: int, rec_key: str,
     """Return a plain-English explanation of why this turnstile position is worth considering."""
     if t_idx == 0:
         return f"**Recommended for you:** {persona_result['story']}"
-    rec_r  = routes[rec_key]
-    curr_r = routes[t_key]
+    rec_r  = persona_result.get("rec_route") or routes.get(rec_key)
+    curr_r = routes.get(t_key)
+    if rec_r is None or curr_r is None:
+        return f"**Alternative route — optimised for {t_key.replace('_', ' ')}.**"
     d_cost = (curr_r.cost - rec_r.cost) * 100
     d_lt   = curr_r.lead_time_days - rec_r.lead_time_days
     d_rs   = curr_r.rs - rec_r.rs
@@ -1107,7 +1115,7 @@ if st.session_state.explorer_mode is None:
 # ══════════════════════════════════════════════════════════════════════════════
 if st.session_state.explorer_mode == "expert":
     st.plotly_chart(
-        make_route_radar({k: v for k, v in routes.items() if not k.startswith("_")}),
+        make_route_radar({k: v for k, v in routes.items() if k in _CRITERIA_KEYS}),
         width='stretch',
         config={"displayModeBar": False},
     )
@@ -1202,6 +1210,89 @@ if st.session_state.explorer_mode == "expert":
             mime="text/html",
         )
 
+    # ── Pareto Frontier & What-If ─────────────────────────────────────────────
+    st.markdown("---")
+    with st.expander("🎯 Pareto Frontier & What-If Analysis", expanded=False):
+        frontier = routes.get("frontier", [])
+        if not frontier:
+            st.info("No Pareto frontier available for this corridor.")
+        else:
+            st.caption(
+                f"The Efficient Frontier has **{len(frontier)} non-dominated route(s)** "
+                f"from {len(routes.get('candidates', []))} candidates across three search passes "
+                f"(cost, lead-time, resilience). Each point is optimal — no other route beats it "
+                f"on all three dimensions simultaneously."
+            )
+
+            # ── What-If Sliders ──────────────────────────────────────────────
+            st.markdown("##### Adjust Your Priorities")
+            sl_col, donut_col = st.columns([2, 1])
+            with sl_col:
+                w_c_raw = st.slider("Cost Weight",       0.0, 1.0, 0.33, 0.01, key="expert_w_c")
+                w_t_raw = st.slider("Speed Weight",      0.0, 1.0, 0.33, 0.01, key="expert_w_t")
+                w_r_raw = st.slider("Resilience Weight", 0.0, 1.0, 0.34, 0.01, key="expert_w_r")
+                _total  = w_c_raw + w_t_raw + w_r_raw or 1.0
+                w_c, w_t, w_r = w_c_raw / _total, w_t_raw / _total, w_r_raw / _total
+                st.caption(f"Normalised: Cost={w_c:.0%} · Speed={w_t:.0%} · Resilience={w_r:.0%}")
+            with donut_col:
+                st.plotly_chart(
+                    make_weight_donut(w_c, w_t, w_r),
+                    use_container_width=True,
+                    config={"displayModeBar": False},
+                )
+
+            # Score and highlight the recommended route
+            scored = score_frontier(list(frontier), w_c, w_t, w_r)
+            rec_frontier = scored[0] if scored else None
+
+            if rec_frontier:
+                st.success(
+                    f"**Recommended from frontier:** {' → '.join(rec_frontier.path)}  "
+                    f"· Cost {rec_frontier.cost * 100:.2f}% · {rec_frontier.lead_time_days:.1f} days "
+                    f"· RS {rec_frontier.rs:.1f} · Score {rec_frontier.score:.3f}"
+                )
+
+            # ── Bubble Scatter ───────────────────────────────────────────────
+            st.markdown("##### Cost vs Speed — bubble size = Resilience Score")
+            st.plotly_chart(
+                make_pareto_scatter_2d(
+                    candidates=routes.get("candidates", frontier),
+                    frontier=frontier,
+                    highlighted_path=rec_frontier.path if rec_frontier else None,
+                ),
+                use_container_width=True,
+                config={"displayModeBar": True},
+            )
+
+            # ── Anchor Routes (extreme-weight corners) ───────────────────────
+            st.markdown("##### Anchor Routes")
+            st.caption(
+                "These are the three extreme corners of the frontier — "
+                "the result when a single objective is given full weight."
+            )
+            anchor_cheapest    = min(frontier, key=lambda r: r.cost)
+            anchor_fastest     = min(frontier, key=lambda r: r.lead_time_days)
+            anchor_resilient   = max(frontier, key=lambda r: r.rs)
+            a_col1, a_col2, a_col3 = st.columns(3)
+            for col, label, color, anchor in [
+                (a_col1, "★ Pure Cost",        "#4A90D9", anchor_cheapest),
+                (a_col2, "★ Pure Speed",       "#F5A623", anchor_fastest),
+                (a_col3, "★ Pure Resilience",  "#27AE60", anchor_resilient),
+            ]:
+                with col:
+                    st.markdown(
+                        f'<div style="border-top:3px solid {color};padding:12px;'
+                        f'background:#161b22;border-radius:8px;">'
+                        f'<div style="font-weight:700;color:{color};margin-bottom:6px">{label}</div>'
+                        f'<div style="font-size:13px;color:#e6edf3;">'
+                        f'{" → ".join(anchor.path)}</div>'
+                        f'<div style="margin-top:8px;font-size:12px;color:#8B949E;">'
+                        f'Cost: {anchor.cost * 100:.2f}% · '
+                        f'{anchor.lead_time_days:.1f}d · RS {anchor.rs:.1f}'
+                        f'</div></div>',
+                        unsafe_allow_html=True,
+                    )
+
     render_footer()
 
 
@@ -1223,7 +1314,7 @@ else:
         # ── Filter candidate pool to only routes within user requirements ──────
         margin_pct        = st.session_state.wiz_answers.get("margin", 20)
         deadline_days_req = st.session_state.wiz_answers.get("deadline_days")
-        all_candidates    = routes.get("_candidates", [])
+        all_candidates    = routes.get("candidates", [])
 
         viable = [
             r for r in all_candidates
@@ -1240,7 +1331,7 @@ else:
             _no_viable = False
         else:
             _no_viable    = True
-            guided_routes = {k: v for k, v in routes.items() if not k.startswith("_")}
+            guided_routes = {k: v for k, v in routes.items() if k in _CRITERIA_KEYS}
 
         # Deduplicate: same path can be best for multiple criteria → show once
         _seen_paths: dict[tuple, str] = {}
@@ -1253,7 +1344,11 @@ else:
 
         guided_criteria_dicts = {k: guided_routes[k].to_dict() for k in guided_crit_keys}
 
-        persona_result = _compute_persona(st.session_state.wiz_answers, guided_routes)
+        # Pass full routes dict so _compute_persona can access the frontier
+        persona_result = _compute_persona(
+            st.session_state.wiz_answers,
+            {**guided_routes, "frontier": routes.get("frontier", []), "candidates": all_candidates},
+        )
         rec_key        = persona_result["rec_key"]
         if rec_key not in guided_crit_keys:
             rec_key = guided_crit_keys[0]
