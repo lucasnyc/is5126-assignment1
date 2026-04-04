@@ -572,8 +572,8 @@ def make_pareto_scatter_2d(
     highlighted_path: list[str] | None = None,
 ) -> go.Figure:
     """
-    2D bubble chart: x = Freight Cost (%), y = Lead Time (days),
-    bubble size = Resilience Score (larger = more resilient).
+    2D bubble chart: x = Freight Cost (%), y = Resilience Score (RS),
+    bubble size = Lead Time (days, larger = longer).
 
     All triple-pass candidates are plotted.  Pareto-efficient routes are shown
     at full opacity; dominated routes are shown at reduced opacity so the
@@ -606,9 +606,9 @@ def make_pareto_scatter_2d(
     resilient_path = max(all_routes, key=lambda r: r.rs).path
     anchor_paths   = {tuple(cheapest_path), tuple(fastest_path), tuple(resilient_path)}
 
-    # Scale bubble sizes: RS 0→100 maps to pixel diameter 10→50
-    def _bubble_size(rs: float) -> float:
-        return 10 + (rs / 100.0) * 40
+    # Scale bubble sizes: lead time 0→60 days maps to pixel diameter 10→50
+    def _bubble_size(lt: float) -> float:
+        return max(10, min(50, 10 + (lt / 60.0) * 40))
 
     # Split routes into: dominated background, frontier, anchors, highlighted
     dominated = [r for r in all_routes if tuple(r.path) not in frontier_paths]
@@ -634,13 +634,13 @@ def make_pareto_scatter_2d(
     if dominated:
         data.append(go.Scatter(
             x=[r.cost * 100 for r in dominated],
-            y=[r.lead_time_days for r in dominated],
+            y=[r.rs for r in dominated],
             mode="markers",
             name="Dominated",
             marker=dict(
-                size=[_bubble_size(r.rs) for r in dominated],
-                color=[r.rs for r in dominated],
-                colorscale="RdYlGn", cmin=0, cmax=100,
+                size=[_bubble_size(r.lead_time_days) for r in dominated],
+                color=[r.lead_time_days for r in dominated],
+                colorscale="RdYlGn_r", cmin=0, cmax=60,
                 opacity=0.25,
                 line=dict(color="#ffffff", width=0.5),
                 sizemode="diameter",
@@ -653,18 +653,18 @@ def make_pareto_scatter_2d(
     if eff:
         data.append(go.Scatter(
             x=[r.cost * 100 for r in eff],
-            y=[r.lead_time_days for r in eff],
+            y=[r.rs for r in eff],
             mode="markers",
             name="Efficient Frontier",
             marker=dict(
-                size=[_bubble_size(r.rs) for r in eff],
-                color=[r.rs for r in eff],
-                colorscale="RdYlGn", cmin=0, cmax=100,
+                size=[_bubble_size(r.lead_time_days) for r in eff],
+                color=[r.lead_time_days for r in eff],
+                colorscale="RdYlGn_r", cmin=0, cmax=60,
                 opacity=0.9,
                 line=dict(color="#ffffff", width=1),
                 sizemode="diameter",
                 colorbar=dict(
-                    title="RS Score",
+                    title="Lead Time (days)",
                     tickfont=dict(color="#e6edf3"),
                     titlefont=dict(color="#e6edf3"),
                     len=0.7, x=1.02,
@@ -684,16 +684,16 @@ def make_pareto_scatter_2d(
         lbl = _anchor_labels.get(tuple(r.path), "★")
         data.append(go.Scatter(
             x=[r.cost * 100],
-            y=[r.lead_time_days],
+            y=[r.rs],
             mode="markers+text",
             name=lbl,
             text=[lbl],
             textposition="top center",
             textfont=dict(color="#FFD700", size=11),
             marker=dict(
-                size=_bubble_size(r.rs),
-                color=r.rs,
-                colorscale="RdYlGn", cmin=0, cmax=100,
+                size=_bubble_size(r.lead_time_days),
+                color=r.lead_time_days,
+                colorscale="RdYlGn_r", cmin=0, cmax=60,
                 opacity=1.0,
                 symbol="star",
                 line=dict(color="#FFD700", width=1.5),
@@ -708,14 +708,14 @@ def make_pareto_scatter_2d(
     for r in rec:
         data.append(go.Scatter(
             x=[r.cost * 100],
-            y=[r.lead_time_days],
+            y=[r.rs],
             mode="markers+text",
             name="Recommended",
             text=["▶ Recommended"],
             textposition="top center",
             textfont=dict(color="#FFD700", size=11),
             marker=dict(
-                size=_bubble_size(r.rs) + 6,
+                size=_bubble_size(r.lead_time_days) + 6,
                 color="#FFD700",
                 symbol="diamond",
                 line=dict(color="#ffffff", width=2),
@@ -735,7 +735,7 @@ def make_pareto_scatter_2d(
             tickfont=dict(color="#e6edf3"),
         ),
         yaxis=dict(
-            title="Lead Time (days)",
+            title="Resilience Score",
             gridcolor="#21262d",
             zerolinecolor="#21262d",
             titlefont=dict(color="#e6edf3"),
@@ -752,7 +752,7 @@ def make_pareto_scatter_2d(
         margin=dict(l=60, r=80, t=30, b=50),
         height=480,
         annotations=[dict(
-            text="Bubble size = Resilience Score",
+            text="Bubble size = Lead Time (days)",
             xref="paper", yref="paper",
             x=0, y=-0.12, showarrow=False,
             font=dict(color="#8B949E", size=11),

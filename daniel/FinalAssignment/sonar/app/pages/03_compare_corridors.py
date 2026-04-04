@@ -60,7 +60,7 @@ ALL_COUNTRIES = sorted(sample_graph.nodes())
 # Curated nearshoring candidates: geographically sensible hubs with strong
 # port infrastructure between common origin-destination pairs.
 _HUB_SUGGESTIONS: dict[str, list[str]] = {
-    "United States":     ["Mexico", "Brazil", "Vietnam", "India"],
+    "United States":     ["Mexico", "Vietnam", "Brazil", "India"],
     "Germany":           ["Turkey", "Morocco", "United Arab Emirates"],
     "United Kingdom":    ["Morocco", "Turkey", "Netherlands"],
     "Japan":             ["Republic of Korea", "Vietnam", "Singapore"],

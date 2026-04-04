@@ -20,6 +20,13 @@ from src.graph.chokepoints import chokepoint_exposure
 
 # Average container ship speed: 15 knots = 27.78 km/h = 666.7 km/day
 _SHIP_SPEED_KM_PER_DAY = 666.7
+
+# Module-level caches for derived graphs (keyed by graph identity).
+# Since base graphs are loaded once via st.cache_resource their id() is stable
+# for the lifetime of the server process, so these caches are effectively
+# process-scoped and survive across browser sessions.
+_lt_graph_cache: dict[tuple, nx.DiGraph] = {}   # (id(G), blocked_wps) → G_lt
+_rs_graph_cache: dict[int, nx.DiGraph]   = {}   # id(G)               → G_rs
 # Port handling time per intermediate transshipment stop
 # (unloading ~0.5d + storage/customs ~1.5d + reloading ~0.5d)
 _PORT_DAYS_PER_STOP = 2.5
@@ -556,28 +563,40 @@ def _build_lt_graph(G: nx.DiGraph, blocked_wps: frozenset = frozenset()) -> nx.D
     Return a copy of G where each edge weight = maritime sailing days for that leg.
     Uses the existing waypoint graph (_maritime_leg_km) so blocked chokepoints
     automatically inflate lead-time weights via the detour path.
+
+    Results are cached by (id(G), blocked_wps) so repeated calls with the same
+    base graph (e.g. the process-level cached graphs) skip the rebuild.
     """
-    G2 = G.copy()
-    for u, v in G2.edges():
-        dist_km = _maritime_leg_km(u, v, blocked_wps)
-        G2[u][v]["weight"] = dist_km / _SHIP_SPEED_KM_PER_DAY
-    return G2
+    cache_key = (id(G), blocked_wps)
+    if cache_key not in _lt_graph_cache:
+        G2 = G.copy()
+        for u, v in G2.edges():
+            dist_km = _maritime_leg_km(u, v, blocked_wps)
+            G2[u][v]["weight"] = dist_km / _SHIP_SPEED_KM_PER_DAY
+        _lt_graph_cache[cache_key] = G2
+    return _lt_graph_cache[cache_key]
 
 
 def _build_rs_graph(G: nx.DiGraph, scorer) -> nx.DiGraph:
     """
     Return a copy of G where each edge weight = 1 / (RS_of_edge + ε).
     Minimising this weight via Yen's maximises resilience along the path.
+
+    Results are cached by id(G) so repeated calls with the same base graph
+    skip the per-edge scorer calls.
     """
-    G2 = G.copy()
-    for u, v in G2.edges():
-        rs_result = scorer.score(
-            path_k1=[u, v],
-            cost_k1=G2[u][v]["weight"],
-            G=G2,
-        )
-        G2[u][v]["weight"] = 1.0 / (rs_result["score"] + 1e-3)
-    return G2
+    gid = id(G)
+    if gid not in _rs_graph_cache:
+        G2 = G.copy()
+        for u, v in G2.edges():
+            rs_result = scorer.score(
+                path_k1=[u, v],
+                cost_k1=G2[u][v]["weight"],
+                G=G2,
+            )
+            G2[u][v]["weight"] = 1.0 / (rs_result["score"] + 1e-3)
+        _rs_graph_cache[gid] = G2
+    return _rs_graph_cache[gid]
 
 
 def pareto_filter(routes: list) -> list:

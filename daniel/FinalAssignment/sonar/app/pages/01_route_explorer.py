@@ -1253,7 +1253,7 @@ if st.session_state.explorer_mode == "expert":
                 )
 
             # ── Bubble Scatter ───────────────────────────────────────────────
-            st.markdown("##### Cost vs Speed — bubble size = Resilience Score")
+            st.markdown("##### Cost vs Resilience — bubble size = Lead Time")
             st.plotly_chart(
                 make_pareto_scatter_2d(
                     candidates=routes.get("candidates", frontier),

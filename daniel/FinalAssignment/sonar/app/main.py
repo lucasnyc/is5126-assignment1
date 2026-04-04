@@ -20,7 +20,7 @@ sys.path.insert(0, ROOT)
 
 from config import PRODUCT_CODES, PRODUCT_NAMES, LATEST_YEAR, TOP_CORRIDORS
 from src.graph.builder import load_latest_graphs_cache, build_latest_graphs
-from src.graph.routing import find_k_routes, find_multi_criteria_routes
+from src.graph.routing import find_k_routes, find_multi_criteria_routes, find_pareto_frontier, apply_scenario
 from src.viz.globe import make_multi_criteria_globe
 from src.graph.chokepoints import get_tariff_multipliers
 from src.models.predictor import load_edges
@@ -66,6 +66,66 @@ def _load_edges():
 @st.cache_resource
 def _load_scorer():
     return ResilienceScorer()
+
+
+_PRELOAD_ORIGIN  = "China"
+_PRELOAD_DEST    = "Germany"
+_PRELOAD_PRODUCT = 8517          # Telephones & Electronics
+_PRELOAD_KEY     = (_PRELOAD_ORIGIN, _PRELOAD_DEST, _PRELOAD_PRODUCT, LATEST_YEAR, (), 0, 0, 0, 0)
+_CRITERIA_KEYS   = {"cheapest", "fastest", "most_resilient"}
+
+
+@st.cache_resource(show_spinner="Pre-computing default route...")
+def _preload_default_routes() -> tuple[dict, dict]:
+    """
+    Compute the China → Germany frontier AND globe figure once per server
+    process for both the zero-tariff case (mode selector / guided wizard)
+    and the us_tariff=10 case (expert sidebar default).
+    Returns (routes_cache, globe_cache) dicts ready to copy into session_state.
+    """
+    graphs = _load_graphs()
+    scorer = _load_scorer()
+    gkey   = (LATEST_YEAR, _PRELOAD_PRODUCT)
+    if gkey not in graphs:
+        return {}, {}
+    G           = graphs[gkey]
+    all_lsci    = [G.nodes[n].get("lsci", 0) for n in G.nodes()]
+    median_lsci = float(pd.Series(all_lsci).replace(0, pd.NA).median() or 50.0)
+
+    routes_cache: dict = {}
+    globe_cache:  dict = {}
+
+    # Scenarios to precompute: (us_tariff, eu_tariff, china_tariff, asean_tariff)
+    scenarios = [
+        (0,  0, 0, 0),   # zero-tariff — used while mode selector is shown
+        (10, 0, 0, 0),   # expert sidebar default (US Tariff slider starts at 10)
+    ]
+
+    for us_t, eu_t, cn_t, as_t in scenarios:
+        cache_key = (_PRELOAD_ORIGIN, _PRELOAD_DEST, _PRELOAD_PRODUCT,
+                     LATEST_YEAR, (), us_t, eu_t, cn_t, as_t)
+        tariff_mults = get_tariff_multipliers(
+            us_pct=float(us_t), eu_pct=float(eu_t),
+            china_pct=float(cn_t), asean_pct=float(as_t),
+        )
+        G_active = apply_scenario(G, tariff_multipliers=tariff_mults) if any([us_t, eu_t, cn_t, as_t]) else G
+        try:
+            routes = find_pareto_frontier(
+                G_active, _PRELOAD_ORIGIN, _PRELOAD_DEST, scorer,
+                k_per_pass=10, median_lsci=median_lsci,
+                blocked_wps=frozenset(),
+            )
+            criteria_dicts = {k: r.to_dict() for k, r in routes.items() if k in _CRITERIA_KEYS}
+            globe_fig = make_multi_criteria_globe(
+                criteria_routes=criteria_dicts,
+                blocked_chokepoints=[],
+            )
+            routes_cache[cache_key] = routes
+            globe_cache[cache_key]  = (criteria_dicts, globe_fig)
+        except (nx.NetworkXNoPath, nx.NodeNotFound):
+            pass
+
+    return routes_cache, globe_cache
 
 
 @st.cache_resource(show_spinner="Pre-computing resilience baseline...")
@@ -116,50 +176,13 @@ if "scorer" not in st.session_state:
 if "heatmap_baseline" not in st.session_state:
     st.session_state.heatmap_baseline = _compute_heatmap_baseline()
 
-# ── Preload default route: China → United States, Telephones & Electronics ────
-# Populates the route explorer's session-state caches so the first render of
-# that page is instant — no computation happens when the mode selector shows.
-if "_re_routes_cache" not in st.session_state:
-    st.session_state["_re_routes_cache"] = {}
-if "_re_globe_cache" not in st.session_state:
-    st.session_state["_re_globe_cache"] = {}
-
-_PRE_ORIGIN   = "China"
-_PRE_DEST     = "Germany"
-_PRE_PRODUCT  = 8517          # Telephones & Electronics
-_PRE_YEAR     = LATEST_YEAR
-_PRE_GRAPHS   = st.session_state.graphs
-_PRE_SCORER   = st.session_state.scorer
-_PRE_GKEY     = (_PRE_YEAR, _PRE_PRODUCT)
-
-if _PRE_GKEY in _PRE_GRAPHS:
-    _PRE_G = _PRE_GRAPHS[_PRE_GKEY]
-    _pre_all_lsci    = [_PRE_G.nodes[n].get("lsci", 0) for n in _PRE_G.nodes()]
-    _pre_median_lsci = float(pd.Series(_pre_all_lsci).replace(0, pd.NA).median() or 50.0)
-    # Two keys: (a) zero-tariff used during mode selection,
-    #           (b) US-tariff=10 used once expert/guided sidebar appears
-    for _pre_us in (0, 10):
-        _pre_cache_key = (_PRE_ORIGIN, _PRE_DEST, _PRE_PRODUCT, _PRE_YEAR,
-                          (), _pre_us, 0, 0, 0)
-        if _pre_cache_key not in st.session_state["_re_routes_cache"]:
-            try:
-                _pre_routes = find_multi_criteria_routes(
-                    _PRE_G, _PRE_ORIGIN, _PRE_DEST, _PRE_SCORER,
-                    k_candidates=20, median_lsci=_pre_median_lsci,
-                    blocked_wps=frozenset(),
-                )
-                st.session_state["_re_routes_cache"][_pre_cache_key] = _pre_routes
-                _pre_criteria = {k: r.to_dict() for k, r in _pre_routes.items()
-                                 if not k.startswith("_")}
-                st.session_state["_re_globe_cache"][_pre_cache_key] = (
-                    _pre_criteria,
-                    make_multi_criteria_globe(
-                        criteria_routes=_pre_criteria,
-                        blocked_chokepoints=[],
-                    ),
-                )
-            except (nx.NetworkXNoPath, nx.NodeNotFound):
-                pass
+# ── Preload default route: China → Germany, Telephones & Electronics ──────────
+# Seed both caches from the process-level precomputed result so the first render
+# of the Route Explorer is instant — routes AND globe are ready on arrival.
+if "_re_routes_cache" not in st.session_state or "_re_globe_cache" not in st.session_state:
+    _pre_routes_cache, _pre_globe_cache = _preload_default_routes()
+    st.session_state.setdefault("_re_routes_cache", dict(_pre_routes_cache))
+    st.session_state.setdefault("_re_globe_cache",  dict(_pre_globe_cache))
 
 # ── Data refs ─────────────────────────────────────────────────────────────────
 edges  = st.session_state.edges

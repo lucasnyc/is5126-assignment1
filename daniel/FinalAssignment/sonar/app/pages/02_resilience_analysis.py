@@ -46,7 +46,6 @@ with st.sidebar:
         options=list(PRODUCT_NAMES.values()),
         default=list(PRODUCT_NAMES.values()),
     )
-    n_corridors = st.slider("Top N corridors", 10, len(TOP_CORRIDORS), 20)
     st.markdown("---")
     st.markdown("### Scenario (optional)")
     blocked = []
@@ -69,7 +68,8 @@ st.info(
 )
 
 # ─── Resolve active corridor / product slice ──────────────────────────────────
-active_corridors = TOP_CORRIDORS[:n_corridors]
+n_corridors      = len(TOP_CORRIDORS)
+active_corridors = TOP_CORRIDORS
 selected_codes   = [k for k, v in PRODUCT_NAMES.items() if v in selected_products]
 has_scenario     = bool(blocked) or any([us_t, eu_t, cn_t])
 
@@ -151,7 +151,7 @@ with tab_heatmap:
 with tab_tiers:
     st.caption(
         "Each point is a corridor × product pair. "
-        "Colour = Resilience Score (green = resilient, red = fragile). "
+        "Colour = Lead Time (green = fast, red = slow). "
         "Shape = product type."
     )
 
@@ -192,17 +192,17 @@ with tab_tiers:
         _scatter = px.scatter(
             _tier_df,
             x="Freight Cost (%)",
-            y="Lead Time (days)",
-            color="RS Score",
-            color_continuous_scale="RdYlGn",
-            range_color=[60, 100],
+            y="RS Score",
+            color="Lead Time (days)",
+            color_continuous_scale="RdYlGn_r",
+            range_color=[0, 60],
             symbol="Product",
             hover_data=["Corridor", "Product", "RS Score", "Freight Cost (%)", "Lead Time (days)"],
-            title="Freight Cost vs Lead Time  (colour = Resilience Score)",
+            title="Freight Cost vs Resilience  (colour = Lead Time)",
             labels={
                 "Freight Cost (%)": "Freight Cost (% of cargo value)",
+                "RS Score": "Resilience Score",
                 "Lead Time (days)": "Lead Time (days)",
-                "RS Score": "RS Score",
             },
         )
         _scatter.update_layout(
@@ -211,11 +211,20 @@ with tab_tiers:
             xaxis=dict(gridcolor="#21262d"),
             yaxis=dict(gridcolor="#21262d"),
             coloraxis_colorbar=dict(
-                title="RS Score",
+                title="Lead Time (days)",
                 tickfont=dict(color="#e6edf3"),
                 titlefont=dict(color="#e6edf3"),
+                x=1.02,
+                len=0.6,
+                yanchor="top",
+                y=1.0,
             ),
-            legend=dict(bgcolor="#161b22", bordercolor="#21262d", borderwidth=1),
+            legend=dict(
+                bgcolor="#161b22", bordercolor="#21262d", borderwidth=1,
+                x=1.02, xanchor="left",
+                y=0.35, yanchor="top",
+            ),
+            margin=dict(r=160),
             height=480,
         )
         st.plotly_chart(_scatter, width='stretch', config={"displayModeBar": False})
