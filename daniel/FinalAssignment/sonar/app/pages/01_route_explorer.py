@@ -48,7 +48,7 @@ if "graphs" not in st.session_state:
 graphs = st.session_state.graphs
 scorer = st.session_state.scorer
 
-sample_graph  = graphs[(2021, 8517)]
+sample_graph  = graphs[(2022, 8517)]
 ALL_COUNTRIES = sorted(sample_graph.nodes())
 
 # ── Sidebar — only shown once mode is committed and (for guided) wizard is done ─

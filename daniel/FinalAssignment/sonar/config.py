@@ -30,6 +30,13 @@ MODEL_PATH        = os.path.join(ARTIFACTS_DIR, "xgb_model.json")
 EXPLAINER_PATH    = os.path.join(ARTIFACTS_DIR, "shap_explainer.pkl")
 CONSTANTS_PATH    = os.path.join(ARTIFACTS_DIR, "normalization_constants.pkl")
 
+# ─── TFT model (2022 forecast) ────────────────────────────────────────────────
+_TFT_MODELS_DIR   = "/home/daniel/is5126-assignment1/jianbo/Final Project Work Dir/saved_models"
+TFT_BUNDLE_PATH   = os.path.join(_TFT_MODELS_DIR, "tft_model2_all_products_bundle.pt")
+TFT_DF_MODEL_PATH = os.path.join(_TFT_MODELS_DIR, "df_model.parquet")
+TFT_PREDICTIONS_PATH = os.path.join(ARTIFACTS_DIR, "tft_predictions_2022.parquet")
+FORECAST_YEAR     = 2022
+
 # ─── Products ─────────────────────────────────────────────────────────────────
 PRODUCT_CODES = [8517, 2106, 3304, 9404, 6109]
 
@@ -41,8 +48,8 @@ PRODUCT_NAMES = {
     6109: "Clothing (T-shirts etc.)",
 }
 
-YEARS = list(range(2016, 2022))          # 2016–2021 inclusive
-LATEST_YEAR = 2021                       # single year used by the dashboard
+YEARS = list(range(2016, 2023))          # 2016–2022 inclusive (2022 = TFT forecast)
+LATEST_YEAR = 2022                       # single year used by the dashboard
 TRAIN_YEARS = [2016, 2017, 2018, 2019]
 VAL_YEARS   = [2020]
 TEST_YEARS  = [2021]

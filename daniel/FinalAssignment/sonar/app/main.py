@@ -42,9 +42,15 @@ inject_global_css()
 
 @st.cache_resource(show_spinner="Loading shipping network...")
 def _load_graphs():
-    """Load 5 pre-built graphs (one per product, latest year). Build if missing."""
+    """Load 5 pre-built graphs (one per product, latest year). Build if missing or stale."""
     try:
-        return load_latest_graphs_cache()
+        graphs = load_latest_graphs_cache()
+        # Guard: cache may be from a previous LATEST_YEAR — rebuild if stale
+        if (LATEST_YEAR, PRODUCT_CODES[0]) not in graphs:
+            st.warning(f"Graph cache is for an older year. Rebuilding for {LATEST_YEAR}...")
+            edges = _load_edges()
+            return build_latest_graphs(edges_df=edges, save_cache=True)
+        return graphs
     except FileNotFoundError:
         st.warning("Graph cache not found. Building now — this takes about 30s...")
         edges = _load_edges()
@@ -210,7 +216,7 @@ st.markdown("""
         Strategic supply chain planning tool for profit-driven companies.
         Compare trade corridors, quantify disruption risk in dollars, and identify
         your best sourcing strategy — powered by UNCTAD bilateral trade data,
-        ML-imputed freight rates, and resilience scoring across 375K+ corridors.
+        TFT-forecasted 2022 freight rates, and resilience scoring across 438K+ corridors.
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -265,9 +271,9 @@ _nav_tiles = [
      "routing through an intermediate hub country. Stress-test each strategy under tariff "
      "shocks and chokepoint closures to find your most resilient expansion path."),
     ("pages/04_model_insights.py",      "#F5A623", "🔍", "Model Insights",
-     "Understand why the XGBoost model predicted a specific freight rate. Inspect per-edge "
-     "SHAP-style feature importance, global gain rankings, and held-out test performance "
-     "with design decision rationale."),
+     "Explore 2022 out-of-sample freight forecasts from the Temporal Fusion Transformer. "
+     "View quantile uncertainty bands per corridor, TFT architecture overview, and a "
+     "model comparison with the XGBoost baseline."),
     ("pages/05_score_methodology.py",   "#9B59B6", "🛡",  "Score Methodology",
      "Full explanation of the 5-factor resilience model with equal weights. Understand how "
      "each factor is calculated and how to interpret scores for any corridor."),
@@ -409,9 +415,9 @@ section_header("", "How It Works", "5-stage analytical pipeline")
 
 # Pipeline steps as styled cards
 _steps = [
-    ("1", "ML Imputation", "#4A90D9",
-     "XGBoost imputes missing bilateral freight rates using 25 UNCTAD maritime indicators — "
-     "bilateral LSCI, TEU throughput, fleet ownership, and historical averages."),
+    ("1", "TFT Forecasting", "#4A90D9",
+     "A Temporal Fusion Transformer (TFT) forecasts 2022 freight rates across 62K+ corridors "
+     "with quantile uncertainty bands, replacing the XGBoost imputer used for 2016–2021."),
     ("2", "Graph Engine", "#27AE60",
      "NetworkX + Yen's K-shortest paths finds up to 20 candidate routes per corridor, "
      "constrained to 2 hops (direct or single transshipment hub)."),

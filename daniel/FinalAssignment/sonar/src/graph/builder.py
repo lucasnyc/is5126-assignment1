@@ -28,6 +28,18 @@ GRAPHS_CACHE_PATH        = os.path.join(PROCESSED_DIR, "graphs_cache.pkl")
 LATEST_GRAPHS_CACHE_PATH = os.path.join(PROCESSED_DIR, "graphs_latest.pkl")
 
 
+def _get_year_attr(d: dict, year: int, fallback_year: int = 2021) -> float:
+    """
+    Look up a year-keyed attribute dict, falling back to fallback_year when the
+    requested year has no data.  Needed for 2022 graphs where UNCTAD data ends at 2021.
+    """
+    if year in d:
+        return float(d[year])
+    if fallback_year in d:
+        return float(d[fallback_year])
+    return 0.0
+
+
 def _load_node_attributes() -> dict[str, dict]:
     """
     Build a dict mapping country → {lsci_by_year, fleet_pct_by_year, teu_by_year,
@@ -141,9 +153,9 @@ def build_graph(
 
     for node in G.nodes():
         na = node_attrs.get(node, {})
-        G.nodes[node]["lsci"]              = na.get("lsci", {}).get(year, 0.0)
-        G.nodes[node]["fleet_pct"]         = na.get("fleet_pct", {}).get(year, 0.0)
-        G.nodes[node]["teu"]               = na.get("teu", {}).get(year, 0.0)
+        G.nodes[node]["lsci"]              = _get_year_attr(na.get("lsci", {}), year)
+        G.nodes[node]["fleet_pct"]         = _get_year_attr(na.get("fleet_pct", {}), year)
+        G.nodes[node]["teu"]               = _get_year_attr(na.get("teu", {}), year)
         G.nodes[node]["weather_severity"]  = na.get("weather_severity")
         G.nodes[node]["otd_rate"]          = na.get("otd_rate")
         G.nodes[node]["mean_delay_norm"]   = na.get("mean_delay_norm")
