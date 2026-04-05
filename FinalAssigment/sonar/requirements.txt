@@ -1,0 +1,40 @@
+# SONAR — Supply-chain Optimization and Network Analysis for Resilience
+# Python dependencies
+# Install with: pip install -r requirements.txt
+
+# ── Core data stack ────────────────────────────────────────────────────────────
+pandas>=2.0.0
+numpy>=2.0.0
+pyarrow>=12.0.0          # Parquet support for fast I/O
+
+# ── Machine learning ──────────────────────────────────────────────────────────
+xgboost>=2.0.0
+shap>=0.43.0
+scikit-learn>=1.3.0      # metrics, preprocessing utilities
+optuna>=3.4.0            # optional: hyperparameter tuning
+
+# ── TFT model (required for generate_tft_predictions.py only) ─────────────────
+# The live dashboard does NOT load the TFT at runtime — it uses the pre-generated
+# tft_predictions_2022.parquet produced by running generate_tft_predictions.py.
+torch>=2.0.0
+pytorch-forecasting>=1.0.0
+lightning>=2.0.0
+
+# ── Graph algorithms ──────────────────────────────────────────────────────────
+networkx>=3.0
+
+# ── Dashboard & visualization ─────────────────────────────────────────────────
+streamlit>=1.32.0
+plotly>=5.18.0
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+pycountry>=22.3.5        # country name normalization helper
+joblib>=1.3.0            # model serialization
+
+# ── Development & testing ─────────────────────────────────────────────────────
+pytest>=7.4.0
+jupyter>=1.0.0
+notebook>=7.0.0
+ipykernel>=6.0.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
