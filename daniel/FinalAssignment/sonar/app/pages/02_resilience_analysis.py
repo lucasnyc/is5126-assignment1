@@ -111,22 +111,21 @@ def compute_scenario_data(
     return rows
 
 
-# Always call compute_scenario_data (cached) so lead_time is available for Frontier View.
-# The baseline in session_state lacks lead_time, so we use it only for the heatmap.
-data = compute_scenario_data(
-    active_corridors, selected_codes, year,
-    tuple(sorted(blocked)), us_t, eu_t, cn_t,
-)
-
-# Fast path for heatmap: override with pre-computed baseline when no scenario is active.
+# Fast path: use pre-computed baseline (includes lead_time) when no scenario is active.
+# Falls back to compute_scenario_data (cached) for non-baseline scenarios.
 if not has_scenario and "heatmap_baseline" in st.session_state:
     top_set = {(o, d) for o, d in active_corridors}
-    _heatmap_data = [
+    data = [
         r for r in st.session_state.heatmap_baseline
         if (r["origin"], r["destination"]) in top_set
         and r["product_name"] in selected_products
     ]
+    _heatmap_data = data
 else:
+    data = compute_scenario_data(
+        active_corridors, selected_codes, year,
+        tuple(sorted(blocked)), us_t, eu_t, cn_t,
+    )
     _heatmap_data = data
 
 if not data and not _heatmap_data:
@@ -189,8 +188,9 @@ with tab_tiers:
     if _tier_rows:
         _tier_df = pd.DataFrame(_tier_rows)
 
+        _scatter_df = _tier_df[_tier_df["Freight Cost (%)"] <= 100]
         _scatter = px.scatter(
-            _tier_df,
+            _scatter_df,
             x="Freight Cost (%)",
             y="RS Score",
             color="Lead Time (days)",

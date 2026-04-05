@@ -159,6 +159,7 @@ def _compute_heatmap_baseline():
                     "product_name": PRODUCT_NAMES[prod],
                     "score":        rs["score"],
                     "label":        rs["label"],
+                    "lead_time":    routes[0].lead_time_days,
                 })
             except (nx.NetworkXNoPath, nx.NodeNotFound):
                 rows.append({
@@ -167,6 +168,7 @@ def _compute_heatmap_baseline():
                     "product_name": PRODUCT_NAMES[prod],
                     "score":        0.0,
                     "label":        "No Route",
+                    "lead_time":    None,
                 })
     return rows
 
