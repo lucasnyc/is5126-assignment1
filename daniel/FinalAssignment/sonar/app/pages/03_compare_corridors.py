@@ -373,7 +373,7 @@ for i, (col, (_, row)) in enumerate(zip(cols, df_sorted.iterrows())):
     rs_color = "#27AE60" if row["rs_score"] >= 75 else "#F39C12" if row["rs_score"] >= 50 else "#E74C3C"
     fr_str   = f"{row['freight_rate']:.2f}%" if pd.notna(row["freight_rate"]) else "N/A"
     lt_str   = f"{row['lead_time']:.0f} d"   if pd.notna(row["lead_time"])    else "N/A"
-    chk_str  = f"{row['chk_exposure']:.0f}%"
+    chk_str  = f"{100 - row['chk_exposure']:.0f}%"
 
     hub_line = (
         f'<div style="font-size:10px;color:#58a6ff;margin-bottom:6px">'
@@ -419,7 +419,7 @@ for i, (col, (_, row)) in enumerate(zip(cols, df_sorted.iterrows())):
                 f'<div style="font-weight:600;color:#ccc">{fr_str}</div></div>',
                 f'<div><div style="font-size:9px;color:#aaa">Lead Time</div>'
                 f'<div style="font-weight:600;color:#ccc">{lt_str}</div></div>',
-                f'<div><div style="font-size:9px;color:#aaa">Chk. Exposure</div>'
+                f'<div><div style="font-size:9px;color:#aaa">Redundancy</div>'
                 f'<div style="font-weight:600;color:#ccc">{chk_str}</div></div>',
                 '</div>',
                 f'<div style="margin-top:8px;font-size:10px;color:#6e7681">'
@@ -437,13 +437,18 @@ _bar_metrics = {
     "Resilience Score (0–100)": "rs_score",
     "Freight Cost (%)":         "freight_rate",
     "Speed (days)":             "lead_time",
-    "Redundancy (% exposure)":  "chk_exposure",
+    "Redundancy (%)":           "chk_exposure",
     "Rate Stability (σ pp)":    "rate_volatility",
 }
+_bar_invert = {"chk_exposure"}  # these columns display as 100 - value
 fig_bar = go.Figure()
 for i, (_, row) in enumerate(df_sorted.iterrows()):
     color  = _STRATEGY_COLORS[i % len(_STRATEGY_COLORS)]
-    y_vals = [float(row[col]) if pd.notna(row[col]) else 0.0 for col in _bar_metrics.values()]
+    y_vals = [
+        (100 - float(row[col]) if col in _bar_invert else float(row[col]))
+        if pd.notna(row[col]) else 0.0
+        for col in _bar_metrics.values()
+    ]
     fig_bar.add_trace(go.Bar(
         name=row["label"],
         x=list(_bar_metrics.keys()),
