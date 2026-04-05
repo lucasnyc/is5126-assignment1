@@ -211,9 +211,8 @@ with tab_tiers:
             xaxis=dict(gridcolor="#21262d"),
             yaxis=dict(gridcolor="#21262d"),
             coloraxis_colorbar=dict(
-                title="Lead Time (days)",
+                title=dict(text="Lead Time (days)", font=dict(color="#e6edf3")),
                 tickfont=dict(color="#e6edf3"),
-                titlefont=dict(color="#e6edf3"),
                 x=1.02,
                 len=0.6,
                 yanchor="top",

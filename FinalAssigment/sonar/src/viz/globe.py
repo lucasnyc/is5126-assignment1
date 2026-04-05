@@ -664,9 +664,11 @@ def make_pareto_scatter_2d(
                 line=dict(color="#ffffff", width=1),
                 sizemode="diameter",
                 colorbar=dict(
-                    title="Lead Time (days)",
+                    title=dict(
+                        text="Lead Time (days)",
+                        font=dict(color="#e6edf3"),
+                    ),
                     tickfont=dict(color="#e6edf3"),
-                    titlefont=dict(color="#e6edf3"),
                     len=0.7, x=1.02,
                 ),
             ),
@@ -733,17 +735,15 @@ def make_pareto_scatter_2d(
     fig = go.Figure(data=data)
     fig.update_layout(
         xaxis=dict(
-            title="Cost (% of cargo value)",
+            title=dict(text="Cost (% of cargo value)", font=dict(color="#e6edf3")),
             gridcolor="#21262d",
             zerolinecolor="#21262d",
-            titlefont=dict(color="#e6edf3"),
             tickfont=dict(color="#e6edf3"),
         ),
         yaxis=dict(
-            title="Resilience Score",
+            title=dict(text="Resilience Score", font=dict(color="#e6edf3")),
             gridcolor="#21262d",
             zerolinecolor="#21262d",
-            titlefont=dict(color="#e6edf3"),
             tickfont=dict(color="#e6edf3"),
         ),
         paper_bgcolor=COLORS["paper"],
