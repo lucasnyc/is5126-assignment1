@@ -680,6 +680,11 @@ def make_pareto_scatter_2d(
         tuple(fastest_path):   "★ Fastest",
         tuple(resilient_path): "★ Most Resilient",
     }
+    _anchor_textpos = {
+        "★ Most Resilient": "top left",
+        "★ Cheapest":       "bottom right",
+        "★ Fastest":        "top right",
+    }
     for r in anchors:
         lbl = _anchor_labels.get(tuple(r.path), "★")
         data.append(go.Scatter(
@@ -688,7 +693,7 @@ def make_pareto_scatter_2d(
             mode="markers+text",
             name=lbl,
             text=[lbl],
-            textposition="top center",
+            textposition=_anchor_textpos.get(lbl, "top center"),
             textfont=dict(color="#FFD700", size=11),
             marker=dict(
                 size=_bubble_size(r.lead_time_days),
@@ -712,7 +717,7 @@ def make_pareto_scatter_2d(
             mode="markers+text",
             name="Recommended",
             text=["▶ Recommended"],
-            textposition="top center",
+            textposition="bottom left",
             textfont=dict(color="#FFD700", size=11),
             marker=dict(
                 size=_bubble_size(r.lead_time_days) + 6,
@@ -745,11 +750,16 @@ def make_pareto_scatter_2d(
         plot_bgcolor=COLORS["geo"],
         font=dict(color="#e6edf3"),
         legend=dict(
-            font=dict(color="#e6edf3", size=11),
-            bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#e6edf3", size=10),
+            bgcolor="rgba(22,27,34,0.85)",
             bordercolor="#21262d",
+            borderwidth=1,
+            itemsizing="constant",
+            tracegroupgap=2,
+            x=1.02, xanchor="left",
+            y=1.0, yanchor="top",
         ),
-        margin=dict(l=60, r=80, t=30, b=50),
+        margin=dict(l=60, r=120, t=30, b=50),
         height=480,
         annotations=[dict(
             text="Bubble size = Lead Time (days)",

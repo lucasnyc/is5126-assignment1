@@ -833,7 +833,7 @@ def _render_trend_analysis(edges_df: pd.DataFrame, origin: str, destination: str
     if pred_x:
         fig.add_trace(go.Scatter(
             x=pred_x, y=pred_y, mode="markers",
-            name="ML-imputed",
+            name="ML forecasted",
             marker=dict(size=8, color="#F39C12", symbol="circle-open", line=dict(width=2)),
         ))
 
@@ -996,7 +996,7 @@ def _build_report_html(
 
   <p style="margin-top:40px;font-size:11px;color:#8B949E">
     SONAR — Supply-chain Optimization and Network Analysis for Resilience.<br>
-    Data: UNCTAD 2016–2021. Freight rates partially ML-imputed (XGBoost).
+    Data: UNCTAD 2016–2022. Freight rates ML forecasted (XGBoost/TFT).
     Resilience scores use equal-weighted composite scoring. This report is for planning purposes only.
   </p>
 </body>
