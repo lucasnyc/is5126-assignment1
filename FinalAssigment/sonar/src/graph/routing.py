@@ -111,6 +111,44 @@ def _maritime_leg_km(u: str, v: str, blocked_wps: frozenset = frozenset()) -> fl
     except (nx.NetworkXNoPath, nx.NodeNotFound):
         return 40_000.0   # chokepoint makes route impossible → very long distance
 
+def _compute_route_confidence(route, G):
+
+    observed_edges = 0
+    total_edges = len(route.path) - 1
+    lsci_values = []
+
+    for u, v in zip(route.path[:-1], route.path[1:]):
+        edge = G[u][v]
+
+        if not edge.get("is_predicted", False):
+            observed_edges += 1
+
+        lsci_values.append(edge.get("bilateral_lsci", 0.0))
+
+    observed_ratio = observed_edges / max(total_edges, 1)
+    avg_lsci = sum(lsci_values) / max(len(lsci_values), 1)
+    lsci_score = min(avg_lsci / 100.0, 1.0)
+
+    hop_penalty = 1 / (1 + route.hops)
+
+    confidence = (
+        0.5 * observed_ratio +
+        0.3 * lsci_score +
+        0.2 * hop_penalty
+    )
+
+    breakdown = {
+        "confidence_score": round(confidence, 3),
+        "data_confidence": round(observed_ratio, 3),
+        "connectivity_confidence": round(lsci_score, 3),
+        "hop_penalty": round(hop_penalty, 3),
+        "observed_edges": observed_edges,
+        "total_edges": total_edges,
+        "avg_lsci": round(avg_lsci, 3),
+    }
+
+    return round(confidence, 3), breakdown
+
 
 def _apply_detour_penalty(H: nx.DiGraph, blocked_chokepoints: list[str]) -> None:
     """
@@ -276,6 +314,7 @@ class Route:
         self.lead_time_days = self._estimate_lead_time(graph, median_lsci)
         self.has_predicted  = self._check_predicted(graph)
         self.score          = 0.0   # weighted Pareto score — populated by score_frontier()
+        self.confidence_score, self.confidence_breakdown = _compute_route_confidence(self, graph)
 
     def _estimate_lead_time(self, G: nx.DiGraph, median_lsci: float) -> float:
         """
@@ -317,6 +356,8 @@ class Route:
             "lead_time_days": self.lead_time_days,
             "chk_exposure":   round(self.chk_exposure, 3),
             "has_predicted":  self.has_predicted,
+            "confidence":     self.confidence_score,
+            "confidence_breakdown": self.confidence_breakdown,
         }
 
 
