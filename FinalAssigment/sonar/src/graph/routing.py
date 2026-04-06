@@ -112,23 +112,45 @@ def _maritime_leg_km(u: str, v: str, blocked_wps: frozenset = frozenset()) -> fl
         return 40_000.0   # chokepoint makes route impossible → very long distance
 
 def _compute_route_confidence(route, G):
+    """
+    Compute a heuristic route confidence score based on:
+      1. Route support ratio
+         - 1.0 credit for directly observed edges
+         - 0.6 credit for predicted edges with historical support
+         - 0.0 credit for predicted edges with no historical support
+      2. Average bilateral connectivity (LSCI-based)
+      3. Route simplicity via hop penalty
 
+    This makes confidence more informative for future-year routing, where many
+    edge costs are predicted but some corridors are still historically established.
+    """
+    support_score = 0.0
     observed_edges = 0
+    historical_supported_edges = 0
+    unsupported_predicted_edges = 0
     total_edges = len(route.path) - 1
     lsci_values = []
 
     for u, v in zip(route.path[:-1], route.path[1:]):
         edge = G[u][v]
 
-        if not edge.get("is_predicted", False):
+        is_predicted = edge.get("is_predicted", False)
+        has_history = edge.get("has_historical_support", False)
+
+        if not is_predicted:
+            support_score += 1.0
             observed_edges += 1
+        elif has_history:
+            support_score += 0.6
+            historical_supported_edges += 1
+        else:
+            unsupported_predicted_edges += 1
 
         lsci_values.append(edge.get("bilateral_lsci", 0.0))
 
-    observed_ratio = observed_edges / max(total_edges, 1)
+    observed_ratio = support_score / max(total_edges, 1)
     avg_lsci = sum(lsci_values) / max(len(lsci_values), 1)
     lsci_score = min(avg_lsci / 100.0, 1.0)
-
     hop_penalty = 1 / (1 + route.hops)
 
     confidence = (
@@ -138,16 +160,19 @@ def _compute_route_confidence(route, G):
     )
 
     breakdown = {
-        "confidence_score": round(confidence, 3),
+        "confidence_score": confidence,
         "data_confidence": round(observed_ratio, 3),
         "connectivity_confidence": round(lsci_score, 3),
         "hop_penalty": round(hop_penalty, 3),
+        "support_ratio": round(observed_ratio, 3),
         "observed_edges": observed_edges,
+        "historical_supported_edges": historical_supported_edges,
+        "unsupported_predicted_edges": unsupported_predicted_edges,
         "total_edges": total_edges,
         "avg_lsci": round(avg_lsci, 3),
     }
 
-    return round(confidence, 3), breakdown
+    return confidence, breakdown
 
 
 def _apply_detour_penalty(H: nx.DiGraph, blocked_chokepoints: list[str]) -> None:

@@ -547,7 +547,7 @@ def _route_card_html(crit_key: str, crit_label: str, icon: str, color: str,
         f'<span style="font-size:0.7rem;color:#aaa"> d</span></div>',
         '</div><div>',
         '<div style="font-size:0.65rem;color:#aaa;text-transform:uppercase;letter-spacing:.05em">Confidence</div>',
-        f'<div style="font-size:1rem;font-weight:600;color:{conf_color}">{confidence_pct:.1f}%</div>',
+        f'<div style="font-size:1rem;font-weight:600;color:{conf_color}">{confidence_pct:.3f}%</div>',
         '</div></div></div>',
     ])
 
@@ -567,7 +567,7 @@ def _render_route_details(crit_key: str, crit_label: str, r, rd: dict,
         {"Metric": "Hops",            "Value": str(r.hops)},
         {"Metric": "Chokepoint Exp.", "Value": f"{rd['chk_exposure']:.0%}"},
         {"Metric": "RS Score",        "Value": f"{r.rs:.1f} / 100"},
-        {"Metric": "Confidence",      "Value": f"{confidence_pct:.1f}%"},
+        {"Metric": "Confidence",      "Value": f"{confidence_pct:.3f}%"},
         {"Metric": "ML Predicted",    "Value": "Yes ⚠" if rd["has_predicted"] else "No ✓"},
     ]
     if persona_result:
@@ -591,20 +591,22 @@ def _render_route_details(crit_key: str, crit_label: str, r, rd: dict,
                 pd.DataFrame([{"Component": k, "Contribution (pts)": f"{v:.1f}"}
                               for k, v in comp.items()]).set_index("Component"),
                 width='stretch',
-                )
-    
+            )
+
     if hasattr(r, "confidence_breakdown") and r.confidence_breakdown:
         with st.expander("Confidence breakdown"):
             cd = r.confidence_breakdown
 
-            st.markdown(f"**Final Confidence:** {cd.get('confidence_score', 0)*100:.1f}%")
+            st.markdown(f"**Final Confidence:** {cd.get('confidence_score', 0) * 100:.3f}%")
 
             breakdown_rows = [
-                {"Factor": "Data Confidence", "Value": f"{cd.get('data_confidence', 0)*100:.1f}%"},
-                {"Factor": "Connectivity Strength (LSCI)",  "Value": f"{cd.get('connectivity_confidence', 0)*100:.1f}%"},
-                {"Factor": "Route Simplicity (Hop Penalty)",     "Value": f"{cd.get('hop_penalty', 0)*100:.1f}%"},
-                {"Factor": "Observed Edges",     "Value": f"{cd.get('observed_edges', 0)} / {cd.get('total_edges', 0)}"},
-                {"Factor": "Average LSCI",     "Value": f"{cd.get('avg_lsci', 0):.2f}"},
+                {"Factor": "Route Support", "Value": f"{cd.get('support_ratio', cd.get('data_confidence', 0)) * 100:.3f}%"},
+                {"Factor": "Connectivity Strength (LSCI)", "Value": f"{cd.get('connectivity_confidence', 0) * 100:.1f}%"},
+                {"Factor": "Route Simplicity (Hop Penalty)", "Value": f"{cd.get('hop_penalty', 0) * 100:.1f}%"},
+                {"Factor": "Observed Edges", "Value": f"{cd.get('observed_edges', 0)} / {cd.get('total_edges', 0)}"},
+                {"Factor": "Historically Supported Predicted Edges", "Value": f"{cd.get('historical_supported_edges', 0)}"},
+                {"Factor": "Unsupported Predicted Edges", "Value": f"{cd.get('unsupported_predicted_edges', 0)}"},
+                {"Factor": "Average LSCI", "Value": f"{cd.get('avg_lsci', 0):.2f}"},
             ]
 
             st.dataframe(
@@ -612,14 +614,14 @@ def _render_route_details(crit_key: str, crit_label: str, r, rd: dict,
                 width='stretch'
             )
 
-            # Optional explanation text (VERY HIGH VALUE FOR PROJECT)
             st.caption(
-            "Confidence is computed using:\n"
-            "- Data confidence (observed vs predicted edges)\n"
-            "- Connectivity strength (LSCI between countries)\n"
-            "- Route simplicity (fewer hops = higher confidence)"
-        )
-
+                "Confidence is computed using:\n"
+                "- Route support (observed edges + historical corridor support)\n"
+                "- Connectivity strength (average bilateral LSCI)\n"
+                "- Route simplicity (fewer hops = higher confidence)\n\n"
+                "Predicted edges with historical support receive partial confidence credit, "
+                "while fully unsupported predicted edges reduce the score."
+            )
 
 def _render_cost_of_certainty(routes: dict, base_key: str) -> None:
     """
