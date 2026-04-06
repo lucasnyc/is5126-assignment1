@@ -109,6 +109,7 @@ def build_graph(
     year: int,
     product_code: int,
     node_attrs: dict | None = None,
+    historical_edge_set: set | None = None,
 ) -> nx.DiGraph:
     """
     Build a NetworkX DiGraph for a specific (year, product_code).
@@ -119,13 +120,28 @@ def build_graph(
     year        : integer year (2016-2021)
     product_code: HS product code
     node_attrs  : optional pre-computed node attribute dict (for speed)
+    historical_edge_set : optional set of historically observed
+                          (origin, destination, product_code) tuples
 
     Returns
     -------
     nx.DiGraph with:
-      - edge attrs: weight (freight_rate), bilateral_lsci, is_predicted
+      - edge attrs: weight (freight_rate), bilateral_lsci, is_predicted,
+                    has_historical_support
       - node attrs: lsci, fleet_pct, lat, lon
     """
+    if historical_edge_set is None:
+        hist_df = edges_df[
+            (edges_df["year"] < year) &
+            (edges_df["product_code"] == product_code) &
+            edges_df["freight_rate"].notna() &
+            (edges_df["freight_rate"] >= 0)
+        ][["origin", "destination", "product_code"]].drop_duplicates()
+
+        historical_edge_set = set(
+            hist_df.itertuples(index=False, name=None)
+        )
+
     subset = edges_df[
         (edges_df["year"] == year) &
         (edges_df["product_code"] == product_code) &
@@ -140,11 +156,16 @@ def build_graph(
         dest   = str(row["destination"])
         if origin == dest:
             continue
+
+        edge_key = (origin, dest, product_code)
+        has_historical_support = edge_key in historical_edge_set
+
         G.add_edge(
             origin, dest,
             weight=float(row["freight_rate"]),
             bilateral_lsci=float(row.get("bilateral_lsci", 0.0) or 0.0),
             is_predicted=bool(row.get("is_predicted", False)),
+            has_historical_support=has_historical_support,
         )
 
     # Annotate nodes
